@@ -839,7 +839,10 @@ mod app {
             on_id("continue-forget", "click", move |_| {
                 let app = app2.clone();
                 spawn_local(async move {
-                    if let Some(db) = app.borrow().db.clone() {
+                    // take the handle first: a borrow held across .await would
+                    // collide with the frame loop ("RefCell already borrowed")
+                    let db = app.borrow().db.clone();
+                    if let Some(db) = db {
                         forget_game(&db).await;
                     }
                     show("continue", false);
@@ -1171,7 +1174,10 @@ mod app {
         let f: Rc<RefCell<Option<Closure<dyn FnMut(f64)>>>> = Rc::new(RefCell::new(None));
         let g = f.clone();
         *g.borrow_mut() = Some(Closure::new(move |t: f64| {
-            app.borrow_mut().frame(t);
+            // never panic if state is momentarily borrowed: skip this frame
+            if let Ok(mut a) = app.try_borrow_mut() {
+                a.frame(t);
+            }
             let cb = f.borrow();
             let _ = window().request_animation_frame(cb.as_ref().unwrap().as_ref().unchecked_ref());
         }));

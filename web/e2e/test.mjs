@@ -159,6 +159,22 @@ await page.click('#btn-settings-top'); // settings reachable before starting a g
 const crossPersisted = (await page.locator('#keymap tr', { hasText: 'Cross' }).locator('button').textContent()).trim();
 check(crossPersisted === 'K', `key binding persisted across reload ("${crossPersisted}")`);
 await page.click('#settings-close');
+// forgetting a remembered game must not crash (regression: RefCell borrow
+// held across an await collided with the frame loop)
+await page.click('#continue-forget');
+check(await toastSeen(/Forgot the saved game/), 'forgetting the remembered game works');
+await page.waitForTimeout(500);
+check(!(await page.$$eval('.toast', ts => ts.some(t => /crashed/.test(t.textContent)))), 'no crash after forgetting');
+await page.reload();
+await page.waitForSelector('#start');
+check(!(await visible('#continue')), 'Continue gone after forgetting');
+// put it back for the remaining checks
+await dropFiles([path.join(assets, 'demo.cue'), path.join(assets, 'demo.bin')]);
+check(await waitFor(demoOnScreen, 60000), 'disc boots again after forgetting');
+await page.click('#btn-eject');
+await page.reload();
+await page.waitForSelector('#start');
+await waitFor(() => visible('#continue'), 5000);
 await page.click('#continue-btn');
 check(await waitFor(demoOnScreen, 60000), 'Continue boots the remembered game');
 await page.click('#btn-load');
