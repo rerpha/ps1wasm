@@ -437,6 +437,7 @@ mod app {
             self.ensure_audio();
             show("start", false);
             show("toolbar", true);
+            let _ = document().body().unwrap().class_list().add_1("playing");
             show("paused", false);
             set_text("btn-pause", "⏸ Pause");
             let what = self.title.clone().unwrap_or_else(|| "BIOS menu".into());
@@ -457,6 +458,7 @@ mod app {
             set_text("game-status", ".cue with its .bin file(s), a .bin/.iso image, or a PS-X executable (.exe / .ps-exe)");
             show("start", true);
             show("toolbar", false);
+            let _ = document().body().unwrap().class_list().remove_2("playing", "menu-open");
             show("paused", false);
             set_text("fps", "");
             document().set_title("ps1wasm — PS1 emulator in your browser");
@@ -1070,6 +1072,19 @@ mod app {
                 });
             }
         }
+
+        // ---- landscape menu button (toolbar overlay)
+        on_id("btn-menu", "click", move |_| {
+            let _ = document().body().unwrap().class_list().toggle("menu-open");
+        });
+        on_id("toolbar", "click", move |e| {
+            // close the overlay after picking an action (not when adjusting volume/slot)
+            if let Some(t) = e.target().and_then(|t| t.dyn_into::<Element>().ok()) {
+                if t.closest("button").ok().flatten().is_some() {
+                    let _ = document().body().unwrap().class_list().remove_1("menu-open");
+                }
+            }
+        });
 
         // ---- touch controls (pointer events: multi-touch, mouse and pen)
         {

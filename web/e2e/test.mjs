@@ -235,6 +235,53 @@ check(await toastSeen(/Loaded slot 1/), 'save state survives a reload (IndexedDB
   await mctx.close();
 }
 
+// ---------------------------------------------------------------- 9. phone landscape: handheld layout
+for (const [w, h, expectNoOverlap] of [[844, 390, true], [667, 375, false]]) {
+  const lctx = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
+  const l = await lctx.newPage();
+  l.on('pageerror', e => errors.push(`landscape ${w}: ` + e));
+  await l.goto(url);
+  await l.waitForSelector('#start');
+  await l.click('#demo-btn');
+  await l.waitForTimeout(1500);
+  const box = (sel) => l.evaluate(s => { const r = document.querySelector(s).getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; }, sel);
+  const disp = (sel) => l.evaluate(s => getComputedStyle(document.querySelector(s)).display, sel);
+  const scr = await box('.screen-wrap');
+  const tag = `landscape ${w}x${h}:`;
+  check(scr.y >= -1 && scr.y + scr.h <= h + 1 && Math.abs(scr.h - h) <= 2, `${tag} game fills the full height (${Math.round(scr.w)}x${Math.round(scr.h)})`);
+  const scroll = await l.evaluate(() => [document.documentElement.scrollHeight - innerHeight, document.documentElement.scrollWidth - innerWidth]);
+  check(scroll[0] <= 1 && scroll[1] <= 1, `${tag} no scrolling (${scroll})`);
+  check(await disp('header') === 'none' && await disp('#toolbar') === 'none', `${tag} header and toolbar folded away`);
+  const dpad = await box('.tc-dpad'), face = await box('.tc-face');
+  const inView = (r) => r.x >= -1 && r.y >= -1 && r.x + r.w <= w + 1 && r.y + r.h <= h + 1;
+  check(inView(dpad) && inView(face), `${tag} D-pad and face buttons fully on screen`);
+  if (expectNoOverlap) {
+    check(dpad.x + dpad.w <= scr.x + 1 && face.x >= scr.x + scr.w - 1, `${tag} controls sit beside the picture, not over it`);
+  }
+  // press a button
+  const lpx = (x, y) => l.evaluate(([x, y]) => { const c = document.querySelector('#screen'); return Array.from(c.getContext('2d').getImageData(x, y, 1, 1).data.slice(0, 3)); }, [x, y]);
+  const cross = l.locator('#touch [data-btn="16384"]');
+  await cross.dispatchEvent('pointerdown', { pointerId: 7, pointerType: 'touch' });
+  let ok = false;
+  for (let t = 0; t < 20 && !ok; t++) { await l.waitForTimeout(100); ok = JSON.stringify(await lpx(CROSS.x, CROSS.y)) === JSON.stringify(rgb15(CROSS.on)); }
+  check(ok, `${tag} on-screen ✕ works`);
+  await cross.dispatchEvent('pointerup', { pointerId: 7, pointerType: 'touch' });
+  // menu
+  await l.click('#btn-menu');
+  check(await disp('#toolbar') === 'flex', `${tag} ⋯ opens the toolbar`);
+  await l.click('#btn-pause');
+  check(await disp('#toolbar') === 'none' && await l.evaluate(() => !document.querySelector('#paused').classList.contains('hidden')), `${tag} picking Pause closes the menu and pauses`);
+  await l.click('#btn-menu');
+  await l.click('#btn-pause');
+  await l.waitForTimeout(400);
+  await l.screenshot({ path: path.join(os.tmpdir(), `ps1wasm-landscape-${w}.png`) });
+  // leaving the game restores the normal page
+  await l.click('#btn-menu');
+  await l.click('#btn-eject');
+  check(await disp('header') !== 'none' && await l.evaluate(() => !document.querySelector('#start').classList.contains('hidden')), `${tag} closing the game restores the normal page`);
+  await lctx.close();
+}
+
 check(errors.length === 0, `no console errors ${errors.length ? JSON.stringify(errors) : ''}`);
 await browser.close();
 server.close();
