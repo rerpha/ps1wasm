@@ -1,0 +1,12 @@
+target/
+node_modules/
+dist/
+*.wasm
+*.BIN
+*.bin
+*.cue
+*.iso
+bios/
+web/e2e/node_modules/
+test-assets/
+web/e2e/assets/openbios.bin

@@ -1,0 +1,21 @@
+[package]
+name = "ps1wasm-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Headless runner for testing: boots BIOS/EXE/disc, dumps TTY and VRAM"
+
+[[bin]]
+name = "ps1wasm-run"
+path = "src/main.rs"
+
+[dependencies]
+ps1wasm-core = { path = "../core" }
+png = "0.17"
+
+[[bin]]
+name = "ps1wasm-mktest"
+path = "src/bin_mktest.rs"
+
+[[bin]]
+name = "ps1wasm-fuzzexe"
+path = "src/bin_fuzzexe.rs"

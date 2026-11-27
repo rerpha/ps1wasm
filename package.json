@@ -1,0 +1,19 @@
+{
+  "name": "ps1wasm",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PlayStation emulator in Rust/WebAssembly, running in the browser",
+  "type": "module",
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && wasm-pack build web --release --target web --no-typescript --no-pack --out-dir ../dist/pkg && node tools/copy-static.mjs",
+    "build:demo": "cargo run --release -q -p ps1wasm-cli --bin ps1wasm-mktest -- dist/test-files",
+    "serve": "node tools/serve.mjs dist 8080",
+    "test": "cargo test --workspace --release",
+    "test:e2e": "node web/e2e/test.mjs dist web/e2e/assets"
+  },
+  "devDependencies": {
+    "playwright-core": "1.49.1",
+    "wasm-pack": "^0.15.1"
+  }
+}
