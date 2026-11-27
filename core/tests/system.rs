@@ -211,7 +211,7 @@ fn load_and_muldiv_timing() {
     let spad = run(&cat(&[&[lui(T1, 0x1F80), lw(T0, 0, T1)], &[NOP, NOP]]));
     assert_eq!(spad, 4, "scratchpad load is free");
     let div = run(&[addiu(T0, ZERO, 7), r(0x1A, T0, T0, 0, 0), r(0x12, 0, 0, T1, 0), NOP]);
-    assert!(div >= 36 && div <= 40, "mflo waits for div: {}", div);
+    assert!((36..=40).contains(&div), "mflo waits for div: {}", div);
 }
 
 #[test]

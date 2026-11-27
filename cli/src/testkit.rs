@@ -46,7 +46,7 @@ pub fn demo_exe() -> Vec<u8> {
     exe[0..8].copy_from_slice(b"PS-X EXE");
     let put = |exe: &mut Vec<u8>, off: usize, v: u32| exe[off..off + 4].copy_from_slice(&v.to_le_bytes());
     // Body size must be a multiple of 2048: BIOS loaders read size/2048 sectors.
-    let body = ((code.len() * 4 + 2047) / 2048) * 2048;
+    let body = (code.len() * 4).div_ceil(2048) * 2048;
     put(&mut exe, 0x10, base);
     put(&mut exe, 0x18, base);
     put(&mut exe, 0x1C, body as u32);
@@ -93,7 +93,7 @@ fn bcd(v: u32) -> u8 {
 pub fn bootable_disc(exe: &[u8]) -> Vec<u8> {
     let cnf = b"BOOT = cdrom:\\PSX.EXE;1\r\nTCB = 4\r\nEVENT = 10\r\nSTACK = 801FFF00\r\n";
     let (cnf_lba, exe_lba) = (21u32, 22u32);
-    let total = exe_lba as usize + (exe.len() + SECTOR - 1) / SECTOR;
+    let total = exe_lba as usize + exe.len().div_ceil(SECTOR);
     let mut img = vec![0u8; total * SECTOR];
 
     let lic = b"          Licensed  by          Sony Computer Entertainment Amer  ica ";
@@ -230,12 +230,12 @@ fn random_op(rng: &mut Rng, code: &mut Vec<u32>) {
         6 => {
             // aligned loads incl. unaligned-safe lwl/lwr
             let (op, align) = [(0x20, 1), (0x24, 1), (0x21, 2), (0x25, 2), (0x23, 4), (0x22, 1), (0x26, 1)][rng.below(7) as usize];
-            let off = (rng.below(256 / align) * align) as u32;
+            let off = rng.below(256 / align) * align;
             code.push(i_type(op, BASE_REG, rd, off));
         }
         7 => {
             let (op, align) = [(0x28, 1), (0x29, 2), (0x2B, 4), (0x2A, 1), (0x2E, 1)][rng.below(5) as usize];
-            let off = (rng.below(256 / align) * align) as u32;
+            let off = rng.below(256 / align) * align;
             code.push(i_type(op, BASE_REG, rt, off));
         }
         8 => {
@@ -344,7 +344,7 @@ pub fn fuzz_cpu_exe(seed: u64, ops: usize) -> Vec<u8> {
 
     let mut exe = vec![0u8; 0x800];
     exe[0..8].copy_from_slice(b"PS-X EXE");
-    let body = ((code.len() * 4 + 2047) / 2048) * 2048;
+    let body = (code.len() * 4).div_ceil(2048) * 2048;
     exe[0x10..0x14].copy_from_slice(&base.to_le_bytes());
     exe[0x18..0x1C].copy_from_slice(&base.to_le_bytes());
     exe[0x1C..0x20].copy_from_slice(&(body as u32).to_le_bytes());
@@ -754,7 +754,7 @@ pub fn controller_demo_exe() -> Vec<u8> {
 
     let mut exe = vec![0u8; 0x800];
     exe[0..8].copy_from_slice(b"PS-X EXE");
-    let body = ((code.len() * 4 + 2047) / 2048) * 2048;
+    let body = (code.len() * 4).div_ceil(2048) * 2048;
     exe[0x10..0x14].copy_from_slice(&base.to_le_bytes());
     exe[0x18..0x1C].copy_from_slice(&base.to_le_bytes());
     exe[0x1C..0x20].copy_from_slice(&(body as u32).to_le_bytes());

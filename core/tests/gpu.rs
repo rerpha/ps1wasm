@@ -183,7 +183,7 @@ fn textured_4bpp_with_clut_and_modulation() {
     upload(&mut g, &mut irq, 0, 480, 4, 1, &[0, 0x7FFF, 0x0010, 0]);
     // 4bpp texture at page (128,0): one halfword = 4 texels: 1,2,1,0
     upload(&mut g, &mut irq, 128, 0, 1, 1, &[0x0121]);
-    let clut = (0 / 16) | (480 << 6);
+    let clut = 480 << 6;
     send(&mut g, &mut irq, &[0xE100_0002]); // page x=2 (128), 4bpp
     // modulated by 0x80 (neutral)
     send(&mut g, &mut irq, &[0x6480_8080, xy(300, 10), (clut << 16), xy(4, 1)]);

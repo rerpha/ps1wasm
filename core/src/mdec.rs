@@ -371,6 +371,59 @@ impl Mdec {
     }
 }
 
+
+impl Mdec {
+    pub fn snap(&mut self, s: &mut crate::state::Snap) {
+        s.tag("MDEC");
+        let mut st: u8 = match self.state {
+            State::Idle => 0,
+            State::Decode => 1,
+            State::Quant { color: false } => 2,
+            State::Quant { color: true } => 3,
+            State::Scale => 4,
+        };
+        s.u8(&mut st);
+        self.state = match st {
+            1 => State::Decode,
+            2 => State::Quant { color: false },
+            3 => State::Quant { color: true },
+            4 => State::Scale,
+            _ => State::Idle,
+        };
+        s.u32(&mut self.remaining);
+        s.vec_u32(&mut self.params);
+        s.u32(&mut self.depth);
+        s.bool(&mut self.signed);
+        s.bool(&mut self.bit15);
+        s.buf(&mut self.qt_y);
+        s.buf(&mut self.qt_uv);
+        s.arr_i16(&mut self.scale);
+        let mut n = self.out.len() as u32;
+        s.u32(&mut n);
+        if s.is_loading() {
+            self.out.clear();
+            for _ in 0..n.min(1 << 16) {
+                self.out.push_back(OutChunk { block_order: vec![], row_major: vec![], pos: 0 });
+            }
+        }
+        for c in self.out.iter_mut() {
+            s.vec_u32(&mut c.block_order);
+            s.vec_u32(&mut c.row_major);
+            s.usize(&mut c.pos);
+            if c.pos > c.block_order.len() || c.row_major.len() != c.block_order.len() {
+                s.error.get_or_insert("bad MDEC output chunk".into());
+                c.pos = c.block_order.len();
+            }
+        }
+        if s.is_loading() {
+            self.out.retain(|c| c.pos < c.block_order.len());
+        }
+        s.bool(&mut self.dma_in_enabled);
+        s.bool(&mut self.dma_out_enabled);
+        s.u32(&mut self.current_block);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -471,7 +524,7 @@ mod tests {
             m.write_command(*w);
         }
         assert_eq!(m.output_len(), 128);
-        let c = (160u32 >> 3) as u32;
+        let c = 160u32 >> 3;
         let px = c | (c << 5) | (c << 10) | 0x8000;
         assert_eq!(m.read_data(), px | (px << 16));
         assert_ne!(m.status() & (1 << 31), 1 << 31, "output not empty");
@@ -578,57 +631,5 @@ mod tests {
         m.write_control(0x8000_0000);
         assert_eq!(m.status() & (1 << 29), 0);
         assert_eq!(m.status() & 0xFFFF, 0xFFFF);
-    }
-}
-
-impl Mdec {
-    pub fn snap(&mut self, s: &mut crate::state::Snap) {
-        s.tag("MDEC");
-        let mut st: u8 = match self.state {
-            State::Idle => 0,
-            State::Decode => 1,
-            State::Quant { color: false } => 2,
-            State::Quant { color: true } => 3,
-            State::Scale => 4,
-        };
-        s.u8(&mut st);
-        self.state = match st {
-            1 => State::Decode,
-            2 => State::Quant { color: false },
-            3 => State::Quant { color: true },
-            4 => State::Scale,
-            _ => State::Idle,
-        };
-        s.u32(&mut self.remaining);
-        s.vec_u32(&mut self.params);
-        s.u32(&mut self.depth);
-        s.bool(&mut self.signed);
-        s.bool(&mut self.bit15);
-        s.buf(&mut self.qt_y);
-        s.buf(&mut self.qt_uv);
-        s.arr_i16(&mut self.scale);
-        let mut n = self.out.len() as u32;
-        s.u32(&mut n);
-        if s.is_loading() {
-            self.out.clear();
-            for _ in 0..n.min(1 << 16) {
-                self.out.push_back(OutChunk { block_order: vec![], row_major: vec![], pos: 0 });
-            }
-        }
-        for c in self.out.iter_mut() {
-            s.vec_u32(&mut c.block_order);
-            s.vec_u32(&mut c.row_major);
-            s.usize(&mut c.pos);
-            if c.pos > c.block_order.len() || c.row_major.len() != c.block_order.len() {
-                s.error.get_or_insert("bad MDEC output chunk".into());
-                c.pos = c.block_order.len();
-            }
-        }
-        if s.is_loading() {
-            self.out.retain(|c| c.pos < c.block_order.len());
-        }
-        s.bool(&mut self.dma_in_enabled);
-        s.bool(&mut self.dma_out_enabled);
-        s.u32(&mut self.current_block);
     }
 }

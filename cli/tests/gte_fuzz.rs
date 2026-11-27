@@ -24,7 +24,7 @@ fn parse_cmd(line: &str) -> Option<u32> {
     // "GTE 0x01 RTPS (sf=0, lm=1, tx=2, vx=1, mx=0)"
     let op = u32::from_str_radix(line.split_whitespace().nth(1)?.trim_start_matches("0x"), 16).ok()?;
     let field = |name: &str| -> u32 {
-        line.split(&format!("{}=", name)).nth(1).and_then(|s| s.split(|c| c == ',' || c == ')').next()).and_then(|v| v.trim().parse().ok()).unwrap_or(0)
+        line.split(&format!("{}=", name)).nth(1).and_then(|s| s.split([',', ')']).next()).and_then(|v| v.trim().parse().ok()).unwrap_or(0)
     };
     Some(op | (field("sf") << 19) | (field("mx") << 17) | (field("vx") << 15) | (field("tx") << 13) | (field("lm") << 10))
 }

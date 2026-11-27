@@ -76,7 +76,7 @@ fn rtpt_fills_fifos() {
     g.write_ctrl(7, 500);
     g.write_ctrl(26, 500);
     for i in 0..3u32 {
-        g.write_data(i * 2, (i * 10) as u32);
+        g.write_data(i * 2, i * 10);
         g.write_data(i * 2 + 1, 0);
     }
     g.command(cmd(0x30, true, false));

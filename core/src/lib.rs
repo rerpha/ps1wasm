@@ -1,4 +1,8 @@
 //! PlayStation emulator core.
+// Bit-field code spells out positions (`x << 0`) to mirror the hardware
+// docs, and the GTE maths indexes several arrays with one loop variable the
+// way the formulas are written: both read better than clippy's rewrites.
+#![allow(clippy::identity_op, clippy::needless_range_loop, clippy::too_many_arguments)]
 
 pub mod bus;
 pub mod cdrom;

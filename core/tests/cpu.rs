@@ -304,7 +304,7 @@ fn mult_div() {
     assert_eq!((p.cpu.reg(3), p.cpu.reg(4)), (0xFFFF_FFFF, (-14i32) as u32));
     let u = 0xFFFF_FFFEu64 * 7;
     assert_eq!((p.cpu.reg(5), p.cpu.reg(6)), ((u >> 32) as u32, u as u32));
-    assert_eq!((p.cpu.reg(7), p.cpu.reg(8)), ((-2i32 % 7) as u32, 0)); // -2/7 = 0 rem -2
+    assert_eq!((p.cpu.reg(7), p.cpu.reg(8)), (-2i32 as u32, 0)); // -2/7 = 0 rem -2
     assert_eq!((p.cpu.reg(9), p.cpu.reg(10)), (0xFFFF_FFFE % 7, 0xFFFF_FFFE / 7));
 }
 

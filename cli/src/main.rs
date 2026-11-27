@@ -69,7 +69,7 @@ fn build(args: &[String]) -> Psx {
     if let Some(bin) = arg(args, "--bin") {
         let data = std::fs::read(&bin).expect("read bin");
         let n = data.len() as u64;
-        p.insert_disc(Disc::from_single(n, n % 2352 == 0, Box::new(MemReader(vec![data]))).expect("disc"));
+        p.insert_disc(Disc::from_single(n, n.is_multiple_of(2352), Box::new(MemReader(vec![data]))).expect("disc"));
     }
     p
 }

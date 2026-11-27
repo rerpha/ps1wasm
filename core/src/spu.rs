@@ -663,6 +663,75 @@ impl Spu {
     }
 }
 
+
+fn snap_sweep(s: &mut crate::state::Snap, w: &mut Sweep) {
+    s.u16(&mut w.raw);
+    s.i32(&mut w.level);
+    s.u32(&mut w.counter);
+}
+
+impl Spu {
+    /// The pending `output` audio buffer is not saved (it's transient).
+    pub fn snap(&mut self, s: &mut crate::state::Snap) {
+        s.tag("SPU ");
+        s.buf(&mut self.ram);
+        for v in self.voices.iter_mut() {
+            snap_sweep(s, &mut v.vol_l);
+            snap_sweep(s, &mut v.vol_r);
+            for x in [&mut v.pitch, &mut v.start, &mut v.adsr1, &mut v.adsr2, &mut v.repeat] {
+                s.u16(x);
+            }
+            s.i32(&mut v.env);
+            let mut ph: u8 = match v.phase {
+                Phase::Attack => 0,
+                Phase::Decay => 1,
+                Phase::Sustain => 2,
+                Phase::Release => 3,
+                Phase::Off => 4,
+            };
+            s.u8(&mut ph);
+            v.phase = match ph {
+                0 => Phase::Attack,
+                1 => Phase::Decay,
+                2 => Phase::Sustain,
+                3 => Phase::Release,
+                _ => Phase::Off,
+            };
+            s.u32(&mut v.env_counter);
+            s.u32(&mut v.addr);
+            s.u32(&mut v.counter);
+            s.arr_i16(&mut v.buf);
+            s.i32(&mut v.hist.0);
+            s.i32(&mut v.hist.1);
+            s.u8(&mut v.flags);
+            s.bool(&mut v.ignore_loop);
+            s.bool(&mut v.needs_decode);
+            s.i32(&mut v.last_out);
+        }
+        s.vec_u16(&mut self.regs);
+        snap_sweep(s, &mut self.main_l);
+        snap_sweep(s, &mut self.main_r);
+        s.i16(&mut self.reverb_out_l);
+        s.i16(&mut self.reverb_out_r);
+        for x in [&mut self.pmon, &mut self.non, &mut self.eon, &mut self.endx, &mut self.reverb_base, &mut self.reverb_cur, &mut self.irq_addr, &mut self.transfer_addr, &mut self.capture_idx, &mut self.cycle_acc] {
+            s.u32(x);
+        }
+        s.arr_u16(&mut self.reverb);
+        s.u16(&mut self.cnt);
+        s.u16(&mut self.transfer_ctrl);
+        s.bool(&mut self.irq_flag);
+        s.i16(&mut self.cd_vol.0);
+        s.i16(&mut self.cd_vol.1);
+        s.i16(&mut self.ext_vol.0);
+        s.i16(&mut self.ext_vol.1);
+        s.i32(&mut self.noise_level);
+        s.i32(&mut self.noise_timer);
+        s.bool(&mut self.reverb_phase);
+        s.i32(&mut self.reverb_last.0);
+        s.i32(&mut self.reverb_last.1);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -686,7 +755,7 @@ mod tests {
     /// One ADPCM block with all samples = nibble `n`, shift 0, filter 0.
     fn block(n: u8, flags: u8) -> Vec<u8> {
         let mut b = vec![0u8, flags];
-        b.extend(std::iter::repeat((n << 4) | n).take(14));
+        b.extend(std::iter::repeat_n((n << 4) | n, 14));
         b
     }
 
@@ -714,7 +783,7 @@ mod tests {
         let (mut s, mut irq, _) = spu();
         // shift 4 -> nibble 1 = 0x1000 >> 4 = 0x100 ; filter 1 accumulates
         let mut b = vec![0x14u8, 0];
-        b.extend(std::iter::repeat(0x11).take(14));
+        b.extend(std::iter::repeat_n(0x11, 14));
         upload(&mut s, &mut irq, 0x2000, &b);
         s.voices[0].addr = 0x2000;
         s.decode_block(0, &mut irq);
@@ -776,9 +845,11 @@ mod tests {
 
     #[test]
     fn envelope_phases() {
-        let mut v = Voice::default();
-        v.adsr1 = (0 << 8) | (0xF << 4) | 0x7; // attack rate 0, decay rate max, sustain lvl 8*0x800
-        v.adsr2 = 0x0000 | 0x1F; // sustain rate 0 (increase), release slowest
+        let mut v = Voice {
+            adsr1: (0 << 8) | (0xF << 4) | 0x7, // attack rate 0, decay rate max, sustain lvl 8*0x800
+            adsr2: 0x1F,                        // sustain rate 0 (increase), release slowest
+            ..Voice::default()
+        };
         v.key_on();
         for _ in 0..10 {
             v.tick_envelope();
@@ -818,7 +889,7 @@ mod tests {
         assert_eq!(l, 7);
         // exponential decrease scales by level
         let mut c = 0;
-        assert_eq!(envelope_step(0x4000, &mut c, 0, true, true), 0x4000 + ((-8 << 11) * 0x4000 >> 15));
+        assert_eq!(envelope_step(0x4000, &mut c, 0, true, true), 0x4000 + (((-8 << 11) * 0x4000) >> 15));
     }
 
     #[test]
@@ -910,73 +981,5 @@ mod tests {
         s.write16(0x1AA, 0xC080 | (0xF << 10), &mut irq);
         s.tick(CYCLES_PER_SAMPLE * 200, &mut cd, &mut irq);
         assert!(s.ram[0x70000..].iter().any(|&b| b != 0), "reverb enabled: buffer written");
-    }
-}
-
-fn snap_sweep(s: &mut crate::state::Snap, w: &mut Sweep) {
-    s.u16(&mut w.raw);
-    s.i32(&mut w.level);
-    s.u32(&mut w.counter);
-}
-
-impl Spu {
-    /// The pending `output` audio buffer is not saved (it's transient).
-    pub fn snap(&mut self, s: &mut crate::state::Snap) {
-        s.tag("SPU ");
-        s.buf(&mut self.ram);
-        for v in self.voices.iter_mut() {
-            snap_sweep(s, &mut v.vol_l);
-            snap_sweep(s, &mut v.vol_r);
-            for x in [&mut v.pitch, &mut v.start, &mut v.adsr1, &mut v.adsr2, &mut v.repeat] {
-                s.u16(x);
-            }
-            s.i32(&mut v.env);
-            let mut ph: u8 = match v.phase {
-                Phase::Attack => 0,
-                Phase::Decay => 1,
-                Phase::Sustain => 2,
-                Phase::Release => 3,
-                Phase::Off => 4,
-            };
-            s.u8(&mut ph);
-            v.phase = match ph {
-                0 => Phase::Attack,
-                1 => Phase::Decay,
-                2 => Phase::Sustain,
-                3 => Phase::Release,
-                _ => Phase::Off,
-            };
-            s.u32(&mut v.env_counter);
-            s.u32(&mut v.addr);
-            s.u32(&mut v.counter);
-            s.arr_i16(&mut v.buf);
-            s.i32(&mut v.hist.0);
-            s.i32(&mut v.hist.1);
-            s.u8(&mut v.flags);
-            s.bool(&mut v.ignore_loop);
-            s.bool(&mut v.needs_decode);
-            s.i32(&mut v.last_out);
-        }
-        s.vec_u16(&mut self.regs);
-        snap_sweep(s, &mut self.main_l);
-        snap_sweep(s, &mut self.main_r);
-        s.i16(&mut self.reverb_out_l);
-        s.i16(&mut self.reverb_out_r);
-        for x in [&mut self.pmon, &mut self.non, &mut self.eon, &mut self.endx, &mut self.reverb_base, &mut self.reverb_cur, &mut self.irq_addr, &mut self.transfer_addr, &mut self.capture_idx, &mut self.cycle_acc] {
-            s.u32(x);
-        }
-        s.arr_u16(&mut self.reverb);
-        s.u16(&mut self.cnt);
-        s.u16(&mut self.transfer_ctrl);
-        s.bool(&mut self.irq_flag);
-        s.i16(&mut self.cd_vol.0);
-        s.i16(&mut self.cd_vol.1);
-        s.i16(&mut self.ext_vol.0);
-        s.i16(&mut self.ext_vol.1);
-        s.i32(&mut self.noise_level);
-        s.i32(&mut self.noise_timer);
-        s.bool(&mut self.reverb_phase);
-        s.i32(&mut self.reverb_last.0);
-        s.i32(&mut self.reverb_last.1);
     }
 }

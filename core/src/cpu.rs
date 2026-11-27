@@ -460,7 +460,7 @@ impl Cpu {
             0x0E => self.set_reg(rt, s ^ op_imm(i)),
             0x0F => self.set_reg(rt, op_imm(i) << 16),
             0x10 => self.execute_cop0(i),
-            0x11 | 0x13 => self.cop_if_disabled(((i >> 26) & 3) as u32),
+            0x11 | 0x13 => self.cop_if_disabled((i >> 26) & 3),
             0x12 => self.execute_cop2(i),
             0x20 => {
                 let a = s.wrapping_add(op_imm_se(i));
@@ -564,7 +564,7 @@ impl Cpu {
             0x30 | 0x31 | 0x33 | 0x38 | 0x39 | 0x3B => {
                 // LWC0/1/3, SWC0/1/3: no such coprocessor hardware; only
                 // fault when the CU bit is clear, otherwise a no-op.
-                self.cop_if_disabled(((i >> 26) & 3) as u32)
+                self.cop_if_disabled((i >> 26) & 3)
             }
             0x32 => {
                 // LWC2

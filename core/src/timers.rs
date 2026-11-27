@@ -238,6 +238,22 @@ impl Timers {
     }
 }
 
+
+impl Timers {
+    pub fn snap(&mut self, s: &mut crate::state::Snap) {
+        s.tag("TMRS");
+        for t in self.t.iter_mut() {
+            s.u32(&mut t.counter);
+            s.u32(&mut t.mode);
+            s.u32(&mut t.target);
+            s.bool(&mut t.paused);
+            s.bool(&mut t.irq_fired);
+            s.bool(&mut t.waiting_for_blank);
+            s.u32(&mut t.div8_frac);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,20 +440,5 @@ mod tests {
         t.write(0x04, 1 << 8, false, false);
         t.tick(100, &VideoEvents { dots: 37, ..Default::default() }, &mut irq);
         assert_eq!(t.read(0x00), 37);
-    }
-}
-
-impl Timers {
-    pub fn snap(&mut self, s: &mut crate::state::Snap) {
-        s.tag("TMRS");
-        for t in self.t.iter_mut() {
-            s.u32(&mut t.counter);
-            s.u32(&mut t.mode);
-            s.u32(&mut t.target);
-            s.bool(&mut t.paused);
-            s.bool(&mut t.irq_fired);
-            s.bool(&mut t.waiting_for_blank);
-            s.u32(&mut t.div8_frac);
-        }
     }
 }

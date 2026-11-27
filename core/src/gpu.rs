@@ -690,9 +690,9 @@ impl Gpu {
             g8 += d;
             b8 += d;
         }
-        let mut cr = (r8.clamp(0, 255) >> 3) as i32;
-        let mut cg = (g8.clamp(0, 255) >> 3) as i32;
-        let mut cb = (b8.clamp(0, 255) >> 3) as i32;
+        let mut cr = r8.clamp(0, 255) >> 3;
+        let mut cg = g8.clamp(0, 255) >> 3;
+        let mut cb = b8.clamp(0, 255) >> 3;
         semi_on &= f.semi.is_some();
         if semi_on {
             let br = (bg & 0x1F) as i32;
@@ -1181,7 +1181,7 @@ impl Gpu {
         out.clear();
         out.resize((w * h * 4) as usize, 0);
         if self.display_disabled {
-            for px in out.chunks_exact_mut(4) {
+            for px in out.as_chunks_mut::<4>().0 {
                 px[3] = 0xFF;
             }
             return (w, h);

@@ -730,7 +730,7 @@ impl CdRom {
         }
         if self.mode & 0x04 != 0 {
             self.report_counter += 1;
-            if self.report_counter % 10 == 0 {
+            if self.report_counter.is_multiple_of(10) {
                 let data = self.getloc_p().data;
                 if data.len() == 8 {
                     let mut rep = vec![self.status_byte()];
@@ -796,7 +796,7 @@ impl CdRom {
                         ((nib as i32) << 28) >> 16 // sign-extend to 16-bit scale
                     };
                     let shift = if range > 12 { 9 } else { range };
-                    let mut s = (t >> shift) as i32;
+                    let mut s = t >> shift;
                     s += (st.old * XA_POS[filter] + st.older * XA_NEG[filter] + 32) >> 6;
                     let s = s.clamp(-0x8000, 0x7FFF);
                     st.older = st.old;
@@ -827,6 +827,99 @@ impl CdRom {
         for &(l, r) in &out {
             self.push_audio(l, r);
         }
+    }
+}
+
+
+fn snap_pending(s: &mut crate::state::Snap, p: &mut Pending) {
+    s.u8(&mut p.int);
+    s.vec_u8(&mut p.data);
+}
+
+fn snap_deque_u8(s: &mut crate::state::Snap, q: &mut VecDeque<u8>) {
+    let mut v: Vec<u8> = q.iter().copied().collect();
+    s.vec_u8(&mut v);
+    *q = v.into_iter().collect();
+}
+
+impl CdRom {
+    /// The disc itself is not saved: it is re-attached by the frontend.
+    pub fn snap(&mut self, s: &mut crate::state::Snap) {
+        s.tag("CDRM");
+        for b in [&mut self.index, &mut self.ie, &mut self.iflag, &mut self.request, &mut self.stat, &mut self.mode, &mut self.filter_file, &mut self.filter_chan] {
+            s.u8(b);
+        }
+        snap_deque_u8(s, &mut self.params);
+        snap_deque_u8(s, &mut self.response);
+        s.u32(&mut self.setloc);
+        s.bool(&mut self.setloc_pending);
+        s.u32(&mut self.pos);
+        let mut d: u8 = match self.drive {
+            Drive::Idle => 0,
+            Drive::Reading => 1,
+            Drive::Playing => 2,
+        };
+        s.u8(&mut d);
+        self.drive = match d {
+            1 => Drive::Reading,
+            2 => Drive::Playing,
+            _ => Drive::Idle,
+        };
+        s.u32(&mut self.play_track_end);
+        let mut cmd = self.cmd.map(|c| c as u16 | 0x100).unwrap_or(0);
+        s.u16(&mut cmd);
+        self.cmd = if cmd & 0x100 != 0 { Some(cmd as u8) } else { None };
+        s.vec_u8(&mut self.cmd_params);
+        s.i64(&mut self.cmd_timer);
+        let mut has2 = self.second.is_some();
+        s.bool(&mut has2);
+        let (mut t2, mut p2) = self.second.take().unwrap_or((0, Pending { int: 0, data: vec![] }));
+        s.i64(&mut t2);
+        snap_pending(s, &mut p2);
+        self.second = if has2 { Some((t2, p2)) } else { None };
+        let mut n = self.queue.len() as u32;
+        s.u32(&mut n);
+        if s.is_loading() {
+            self.queue = (0..n.min(256)).map(|_| Pending { int: 0, data: vec![] }).collect();
+        }
+        for p in self.queue.iter_mut() {
+            snap_pending(s, p);
+        }
+        s.i64(&mut self.retry_timer);
+        s.i64(&mut self.sector_timer);
+        s.u32(&mut self.report_counter);
+        s.buf(&mut self.sector[..]);
+        s.bool(&mut self.sector_valid);
+        s.vec_u8(&mut self.data);
+        s.usize(&mut self.data_pos);
+        s.buf(&mut self.last_header);
+        let mut r: u8 = match self.region {
+            Region::Japan => 0,
+            Region::America => 1,
+            Region::Europe => 2,
+        };
+        s.u8(&mut r);
+        self.region = match r {
+            0 => Region::Japan,
+            2 => Region::Europe,
+            _ => Region::America,
+        };
+        s.buf(&mut self.atv_pending);
+        s.buf(&mut self.atv);
+        s.bool(&mut self.muted);
+        s.bool(&mut self.adpcm_muted);
+        for x in self.xa.iter_mut() {
+            s.i32(&mut x.old);
+            s.i32(&mut x.older);
+        }
+        let rs = &mut self.resampler;
+        for v in [&mut rs.prev.0, &mut rs.prev.1, &mut rs.cur.0, &mut rs.cur.1] {
+            s.i32(v);
+        }
+        s.u32(&mut rs.phase);
+        let mut audio: Vec<u32> = self.audio.iter().map(|&(l, r)| (l as u16 as u32) | ((r as u16 as u32) << 16)).collect();
+        s.vec_u32(&mut audio);
+        self.audio = audio.into_iter().map(|w| (w as i16, (w >> 16) as i16)).collect();
     }
 }
 
@@ -1101,97 +1194,5 @@ mod tests {
         cd.write(3, 0x20, &mut irq);
         cd.push_audio(1000, 1000);
         assert_eq!(cd.pop_audio(), (500, 0));
-    }
-}
-
-fn snap_pending(s: &mut crate::state::Snap, p: &mut Pending) {
-    s.u8(&mut p.int);
-    s.vec_u8(&mut p.data);
-}
-
-fn snap_deque_u8(s: &mut crate::state::Snap, q: &mut VecDeque<u8>) {
-    let mut v: Vec<u8> = q.iter().copied().collect();
-    s.vec_u8(&mut v);
-    *q = v.into_iter().collect();
-}
-
-impl CdRom {
-    /// The disc itself is not saved: it is re-attached by the frontend.
-    pub fn snap(&mut self, s: &mut crate::state::Snap) {
-        s.tag("CDRM");
-        for b in [&mut self.index, &mut self.ie, &mut self.iflag, &mut self.request, &mut self.stat, &mut self.mode, &mut self.filter_file, &mut self.filter_chan] {
-            s.u8(b);
-        }
-        snap_deque_u8(s, &mut self.params);
-        snap_deque_u8(s, &mut self.response);
-        s.u32(&mut self.setloc);
-        s.bool(&mut self.setloc_pending);
-        s.u32(&mut self.pos);
-        let mut d: u8 = match self.drive {
-            Drive::Idle => 0,
-            Drive::Reading => 1,
-            Drive::Playing => 2,
-        };
-        s.u8(&mut d);
-        self.drive = match d {
-            1 => Drive::Reading,
-            2 => Drive::Playing,
-            _ => Drive::Idle,
-        };
-        s.u32(&mut self.play_track_end);
-        let mut cmd = self.cmd.map(|c| c as u16 | 0x100).unwrap_or(0);
-        s.u16(&mut cmd);
-        self.cmd = if cmd & 0x100 != 0 { Some(cmd as u8) } else { None };
-        s.vec_u8(&mut self.cmd_params);
-        s.i64(&mut self.cmd_timer);
-        let mut has2 = self.second.is_some();
-        s.bool(&mut has2);
-        let (mut t2, mut p2) = self.second.take().unwrap_or((0, Pending { int: 0, data: vec![] }));
-        s.i64(&mut t2);
-        snap_pending(s, &mut p2);
-        self.second = if has2 { Some((t2, p2)) } else { None };
-        let mut n = self.queue.len() as u32;
-        s.u32(&mut n);
-        if s.is_loading() {
-            self.queue = (0..n.min(256)).map(|_| Pending { int: 0, data: vec![] }).collect();
-        }
-        for p in self.queue.iter_mut() {
-            snap_pending(s, p);
-        }
-        s.i64(&mut self.retry_timer);
-        s.i64(&mut self.sector_timer);
-        s.u32(&mut self.report_counter);
-        s.buf(&mut self.sector[..]);
-        s.bool(&mut self.sector_valid);
-        s.vec_u8(&mut self.data);
-        s.usize(&mut self.data_pos);
-        s.buf(&mut self.last_header);
-        let mut r: u8 = match self.region {
-            Region::Japan => 0,
-            Region::America => 1,
-            Region::Europe => 2,
-        };
-        s.u8(&mut r);
-        self.region = match r {
-            0 => Region::Japan,
-            2 => Region::Europe,
-            _ => Region::America,
-        };
-        s.buf(&mut self.atv_pending);
-        s.buf(&mut self.atv);
-        s.bool(&mut self.muted);
-        s.bool(&mut self.adpcm_muted);
-        for x in self.xa.iter_mut() {
-            s.i32(&mut x.old);
-            s.i32(&mut x.older);
-        }
-        let rs = &mut self.resampler;
-        for v in [&mut rs.prev.0, &mut rs.prev.1, &mut rs.cur.0, &mut rs.cur.1] {
-            s.i32(v);
-        }
-        s.u32(&mut rs.phase);
-        let mut audio: Vec<u32> = self.audio.iter().map(|&(l, r)| (l as u16 as u32) | ((r as u16 as u32) << 16)).collect();
-        s.vec_u32(&mut audio);
-        self.audio = audio.into_iter().map(|w| (w as i16, (w >> 16) as i16)).collect();
     }
 }

@@ -483,6 +483,66 @@ impl Sio0 {
     }
 }
 
+
+impl Sio0 {
+    /// Memory card *contents* are not part of a state (they're persisted
+    /// separately); only the card protocol state is.
+    pub fn snap(&mut self, s: &mut crate::state::Snap) {
+        s.tag("SIO0");
+        for port in self.ports.iter_mut() {
+            s.u16(&mut port.buttons);
+            s.bool(&mut port.pad_connected);
+            let p = &mut port.pad;
+            s.bool(&mut p.dualshock);
+            s.bool(&mut p.analog);
+            s.bool(&mut p.locked);
+            s.bool(&mut p.config);
+            s.buf(&mut p.sticks);
+            s.buf(&mut p.rumble_map);
+            s.buf(&mut p.motors);
+            s.u8(&mut p.cmd);
+            s.vec_u8(&mut p.resp);
+            let mut has = port.card.is_some();
+            s.bool(&mut has);
+            let mut tmp = MemCard::from_data(vec![]);
+            let c = port.card.as_mut().unwrap_or(&mut tmp);
+            s.u8(&mut c.flag);
+            s.u8(&mut c.cmd);
+            s.u16(&mut c.addr);
+            s.u8(&mut c.checksum);
+            s.u8(&mut c.last);
+            s.bool(&mut c.write_ok);
+        }
+        s.u16(&mut self.mode);
+        s.u16(&mut self.ctrl);
+        s.u16(&mut self.baud);
+        let mut rx = self.rx.map(|v| v as u16 | 0x100).unwrap_or(0);
+        s.u16(&mut rx);
+        self.rx = if rx & 0x100 != 0 { Some(rx as u8) } else { None };
+        s.bool(&mut self.irq_flag);
+        s.bool(&mut self.ack_level);
+        let mut t: u8 = match self.target {
+            Target::None => 0,
+            Target::Pad => 1,
+            Target::Card => 2,
+            Target::Ignored => 3,
+        };
+        s.u8(&mut t);
+        self.target = match t {
+            1 => Target::Pad,
+            2 => Target::Card,
+            3 => Target::Ignored,
+            _ => Target::None,
+        };
+        s.usize(&mut self.step);
+        s.i32(&mut self.transfer_timer);
+        let mut tx = self.pending_tx.map(|v| v as u16 | 0x100).unwrap_or(0);
+        s.u16(&mut tx);
+        self.pending_tx = if tx & 0x100 != 0 { Some(tx as u8) } else { None };
+        s.i32(&mut self.ack_timer);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -736,64 +796,5 @@ mod tests {
         assert_ne!(r.s.read(0x4) & (1 << 9), 0);
         r.s.write(0xA, 0x1003 | 0x10);
         assert_eq!(r.s.read(0x4) & (1 << 9), 0);
-    }
-}
-
-impl Sio0 {
-    /// Memory card *contents* are not part of a state (they're persisted
-    /// separately); only the card protocol state is.
-    pub fn snap(&mut self, s: &mut crate::state::Snap) {
-        s.tag("SIO0");
-        for port in self.ports.iter_mut() {
-            s.u16(&mut port.buttons);
-            s.bool(&mut port.pad_connected);
-            let p = &mut port.pad;
-            s.bool(&mut p.dualshock);
-            s.bool(&mut p.analog);
-            s.bool(&mut p.locked);
-            s.bool(&mut p.config);
-            s.buf(&mut p.sticks);
-            s.buf(&mut p.rumble_map);
-            s.buf(&mut p.motors);
-            s.u8(&mut p.cmd);
-            s.vec_u8(&mut p.resp);
-            let mut has = port.card.is_some();
-            s.bool(&mut has);
-            let mut tmp = MemCard::from_data(vec![]);
-            let c = port.card.as_mut().unwrap_or(&mut tmp);
-            s.u8(&mut c.flag);
-            s.u8(&mut c.cmd);
-            s.u16(&mut c.addr);
-            s.u8(&mut c.checksum);
-            s.u8(&mut c.last);
-            s.bool(&mut c.write_ok);
-        }
-        s.u16(&mut self.mode);
-        s.u16(&mut self.ctrl);
-        s.u16(&mut self.baud);
-        let mut rx = self.rx.map(|v| v as u16 | 0x100).unwrap_or(0);
-        s.u16(&mut rx);
-        self.rx = if rx & 0x100 != 0 { Some(rx as u8) } else { None };
-        s.bool(&mut self.irq_flag);
-        s.bool(&mut self.ack_level);
-        let mut t: u8 = match self.target {
-            Target::None => 0,
-            Target::Pad => 1,
-            Target::Card => 2,
-            Target::Ignored => 3,
-        };
-        s.u8(&mut t);
-        self.target = match t {
-            1 => Target::Pad,
-            2 => Target::Card,
-            3 => Target::Ignored,
-            _ => Target::None,
-        };
-        s.usize(&mut self.step);
-        s.i32(&mut self.transfer_timer);
-        let mut tx = self.pending_tx.map(|v| v as u16 | 0x100).unwrap_or(0);
-        s.u16(&mut tx);
-        self.pending_tx = if tx & 0x100 != 0 { Some(tx as u8) } else { None };
-        s.i32(&mut self.ack_timer);
     }
 }

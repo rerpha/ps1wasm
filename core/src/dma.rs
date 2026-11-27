@@ -163,6 +163,20 @@ impl Dma {
     }
 }
 
+
+impl Dma {
+    pub fn snap(&mut self, s: &mut crate::state::Snap) {
+        s.tag("DMA ");
+        for c in self.ch.iter_mut() {
+            s.u32(&mut c.madr);
+            s.u32(&mut c.bcr);
+            s.u32(&mut c.chcr);
+        }
+        s.u32(&mut self.dpcr);
+        s.u32(&mut self.dicr);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,18 +253,5 @@ mod tests {
         d.complete(4, &mut irq);
         assert_eq!(d.read(0x74) & 0x7F00_0000, 0);
         assert_eq!(irq.stat, 0);
-    }
-}
-
-impl Dma {
-    pub fn snap(&mut self, s: &mut crate::state::Snap) {
-        s.tag("DMA ");
-        for c in self.ch.iter_mut() {
-            s.u32(&mut c.madr);
-            s.u32(&mut c.bcr);
-            s.u32(&mut c.chcr);
-        }
-        s.u32(&mut self.dpcr);
-        s.u32(&mut self.dicr);
     }
 }
