@@ -442,7 +442,7 @@ mod app {
             self.game = None;
             self.title = None;
             set_class("step-game", "done", false);
-            set_text("game-status", ".cue with its .bin file(s), a .bin/.iso image, or a PS-X .exe");
+            set_text("game-status", ".cue with its .bin file(s), a .bin/.iso image, or a PS-X executable (.exe / .ps-exe)");
             show("start", true);
             show("toolbar", false);
             show("paused", false);

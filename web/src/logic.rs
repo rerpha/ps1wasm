@@ -244,7 +244,7 @@ pub fn classify(name: &str, size: usize) -> Kind {
     match ext(name).as_str() {
         "mcr" | "mcd" | "gme" | "vmp" | "mc" | "srm" | "mcs" => Kind::MemCard,
         "psxstate" => Kind::State,
-        "cue" | "iso" | "img" | "exe" | "psx" | "psexe" => Kind::Game,
+        "cue" | "iso" | "img" | "exe" | "psx" | "psexe" | "ps-exe" => Kind::Game,
         // A 512 KiB file can't be a disc image (not a multiple of 2352/2048
         // sectors that make sense) - it's a BIOS dump.
         _ if size == BIOS_SIZE => Kind::Bios,
@@ -287,7 +287,9 @@ pub fn load_files(mut files: Vec<(String, Vec<u8>)>) -> Result<Loaded, String> {
     if files.is_empty() {
         return Err("no files selected".into());
     }
-    if let Some(pos) = files.iter().position(|(n, _)| matches!(ext(n).as_str(), "exe" | "psx" | "psexe")) {
+    // Executables are recognised by their header, whatever the extension
+    // (homebrew uses .exe, .psx, .psexe, .ps-exe, ...).
+    if let Some(pos) = files.iter().position(|(n, d)| d.starts_with(b"PS-X EXE") || matches!(ext(n).as_str(), "exe" | "psx" | "psexe" | "ps-exe")) {
         let (name, data) = files.swap_remove(pos);
         ps1wasm_core::parse_exe(&data)?;
         return Ok(Loaded::Exe(data, name));
@@ -464,6 +466,17 @@ mod tests {
             _ => panic!(),
         }
         assert!(load_files(vec![("bad.exe".into(), vec![0u8; 0x900])]).is_err());
+        // homebrew naming: .ps-exe, or any name at all - the header decides
+        let mut good = vec![0u8; 0x800 + 16];
+        good[..8].copy_from_slice(b"PS-X EXE");
+        good[0x1C] = 16;
+        for name in ["bowarrow.ps-exe", "GAME", "thing.dat"] {
+            match load_files(vec![(name.into(), good.clone())]).unwrap() {
+                Loaded::Exe(_, n) => assert_eq!(n, name),
+                _ => panic!("{} not loaded as EXE", name),
+            }
+        }
+        assert_eq!(classify("bowarrow.ps-exe", 70_000), Kind::Game);
         assert!(load_files(vec![("readme.txt".into(), vec![1, 2, 3])]).is_err());
     }
 }
