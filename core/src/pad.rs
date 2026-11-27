@@ -410,6 +410,10 @@ impl Sio0 {
                 self.pending_tx = None;
                 let (reply, ack) = self.exchange(tx);
                 self.rx = Some(reply);
+                // JOY_CTRL bit 10: TX interrupt, bit 11: RX interrupt (psx-spx)
+                if self.ctrl & (3 << 10) != 0 {
+                    self.raise_irq(irq);
+                }
                 if ack {
                     self.ack_timer = ACK_DELAY;
                     self.ack_level = true;
@@ -422,11 +426,18 @@ impl Sio0 {
             self.ack_timer -= c;
             if self.ack_timer <= 0 {
                 self.ack_level = false;
-                if self.ctrl & (1 << 10) != 0 && !self.irq_flag {
-                    self.irq_flag = true;
-                    irq.request(Interrupt::PadMemCard);
+                // JOY_CTRL bit 12: /ACK (DSR) interrupt enable
+                if self.ctrl & (1 << 12) != 0 {
+                    self.raise_irq(irq);
                 }
             }
+        }
+    }
+
+    fn raise_irq(&mut self, irq: &mut Irq) {
+        if !self.irq_flag {
+            self.irq_flag = true;
+            irq.request(Interrupt::PadMemCard);
         }
     }
 
@@ -486,7 +497,7 @@ mod tests {
             Rig { s: Sio0::new(), irq: Irq::default() }
         }
         fn select(&mut self, port: u16) {
-            self.s.write(0xA, 0x1003 | (1 << 10) | ((port as u32) << 13));
+            self.s.write(0xA, 0x1003 | ((port as u32) << 13)); // bit 12 = ACK IRQ enable
         }
         fn deselect(&mut self) {
             self.s.write(0xA, 0);
@@ -694,22 +705,36 @@ mod tests {
     }
 
     #[test]
+    fn ack_interrupt_is_bit_12_not_bit_10() {
+        // Real drivers (BIOS pad routines, Buzzy Bee) set JOY_CTRL = 0x1003:
+        // bit 12 enables the /ACK interrupt. Bit 10 alone is the TX interrupt.
+        let mut r = Rig::new();
+        r.s.write(0xA, 0x1003);
+        r.s.write(0x0, 0x01);
+        for _ in 0..40 {
+            r.s.tick(64, &mut r.irq);
+        }
+        assert_ne!(r.s.read(0x4) & (1 << 9), 0, "ACK raises JOY_STAT.9 with bit 12");
+        assert_ne!(r.irq.stat & (1 << 7), 0);
+    }
+
+    #[test]
     fn irq_requires_enable_and_ack_bit_clears() {
         let mut r = Rig::new();
-        r.s.write(0xA, 0x1003); // no ACK IRQ enable
+        r.s.write(0xA, 0x0003); // no ACK IRQ enable
         r.s.write(0x0, 0x01);
         for _ in 0..40 {
             r.s.tick(64, &mut r.irq);
         }
         assert_eq!(r.irq.stat, 0);
-        r.s.write(0xA, 0x1003 | (1 << 10));
+        r.s.write(0xA, 0x1003);
         r.s.read(0);
         r.s.write(0x0, 0x42);
         for _ in 0..40 {
             r.s.tick(64, &mut r.irq);
         }
         assert_ne!(r.s.read(0x4) & (1 << 9), 0);
-        r.s.write(0xA, 0x1003 | (1 << 10) | 0x10);
+        r.s.write(0xA, 0x1003 | 0x10);
         assert_eq!(r.s.read(0x4) & (1 << 9), 0);
     }
 }
