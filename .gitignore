@@ -9,5 +9,4 @@ dist/
 bios/
 web/e2e/node_modules/
 test-assets/
-web/e2e/assets/openbios.bin
 !web/static/openbios/openbios.bin

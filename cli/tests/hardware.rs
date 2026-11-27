@@ -1,46 +1,17 @@
 //! Regression tests against real-hardware results from JaCzekanski/ps1-tests
 //! (VRAM dumps + TTY logs captured on a PlayStation), run under OpenBIOS.
 //! Skipped when test-assets is absent (tools/fetch-test-assets.sh).
+//! To diagnose a failing VRAM test (error histogram, diff image):
+//!   ps1wasm-run --exe test-assets/ps1-tests/T/T.exe --compare-vram test-assets/ps1-tests/T/vram.png --diff /tmp/diff.png
 
 use ps1wasm_core::gpu::{VRAM_H, VRAM_W};
 use ps1wasm_core::Psx;
-use std::path::{Path, PathBuf};
+use ps1wasm_cli::testkit::host;
+use std::path::Path;
 
-fn assets() -> Option<PathBuf> {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-assets");
-    (p.join("openbios.bin").exists() && p.join("ps1-tests").exists()).then_some(p)
-}
-
-/// Boot OpenBIOS, side-load `exe`, optionally fill VRAM when the EXE starts,
-/// run `frames` frames.
-fn run(a: &Path, exe: &Path, frames: u32, fill: Option<u16>) -> Psx {
-    let mut p = Psx::new();
-    p.load_bios(&std::fs::read(a.join("openbios.bin")).unwrap()).unwrap();
-    let data = std::fs::read(exe).unwrap();
-    let entry = ps1wasm_core::parse_exe(&data).unwrap().pc;
-    p.load_exe_after_bios(&data).unwrap();
-    if let Some(f) = fill {
-        let limit = 33_868_800 * 30;
-        while p.cpu.current_pc != entry && p.bus.cycles < limit {
-            p.step();
-        }
-        p.bus.gpu.vram.fill(f);
-    }
-    let start = p.bus.gpu.frame_count;
-    while p.bus.gpu.frame_count - start < frames as u64 {
-        p.run_frame();
-    }
-    p
-}
-
-fn load_png(path: &Path) -> Vec<u8> {
-    let mut dec = png::Decoder::new(std::fs::File::open(path).unwrap());
-    dec.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-    let mut r = dec.read_info().unwrap();
-    let mut buf = vec![0; r.output_buffer_size()];
-    let info = r.next_frame(&mut buf).unwrap();
-    let ch = info.color_type.samples();
-    buf[..info.buffer_size()].chunks(ch).flat_map(|c| [c[0], c[1 % ch], c[2 % ch]]).collect()
+/// Run a ps1-tests program (`dir/exe`) under OpenBIOS.
+fn run(exe: &Path, frames: u32, fill: Option<u16>) -> Psx {
+    host::run_exe(&host::openbios(), &std::fs::read(exe).unwrap(), frames, fill)
 }
 
 /// Number of program-written pixels (in `region`) differing from the
@@ -51,11 +22,10 @@ fn vram_diff(test: &str, exe: &str, reference: &str, region: Option<(usize, usiz
 
 /// (differing pixels, largest per-channel error in 5-bit units)
 fn vram_diff_err(test: &str, exe: &str, reference: &str, region: Option<(usize, usize, usize, usize)>) -> Option<(usize, u8)> {
-    let a = assets()?;
-    let dir = a.join("ps1-tests").join(test);
-    let p = run(&a, &dir.join(exe), 300, Some(0x0000));
-    let q = run(&a, &dir.join(exe), 300, Some(0x7FFF));
-    let refpx = load_png(&dir.join(reference));
+    let dir = host::test_assets("ps1-tests")?.join(test);
+    let p = run(&dir.join(exe), 300, Some(0x0000));
+    let q = run(&dir.join(exe), 300, Some(0x7FFF));
+    let refpx = host::load_png(&dir.join(reference)).unwrap().2.concat();
     let mut diff = 0;
     let mut max_err = 0u8;
     for k in 0..VRAM_W * VRAM_H {
@@ -127,9 +97,9 @@ fn mdec_frame_dma_decodes_full_frame() {
 
 /// TTY-log tests: every line of the hardware log must appear, no "fail".
 fn log_test(test: &str, exe: &str, frames: u32) {
-    let Some(a) = assets() else { return eprintln!("skipped: no test assets") };
-    let dir = a.join("ps1-tests").join(test);
-    let p = run(&a, &dir.join(exe), frames, None);
+    let Some(tests) = host::test_assets("ps1-tests") else { return eprintln!("skipped: no test assets") };
+    let dir = tests.join(test);
+    let p = run(&dir.join(exe), frames, None);
     let reference = std::fs::read_to_string(dir.join("psx.log")).unwrap();
     let out: Vec<&str> = p.tty.lines().map(|l| l.trim()).collect();
     for line in reference.lines() {

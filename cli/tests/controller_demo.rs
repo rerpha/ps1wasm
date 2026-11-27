@@ -107,8 +107,7 @@ fn no_controller_means_nothing_pressed() {
 
 #[test]
 fn runs_under_openbios_too() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../web/static/openbios/openbios.bin");
-    let Ok(bios) = std::fs::read(path) else { return eprintln!("skipped: no openbios") };
+    let bios = ps1wasm_cli::testkit::host::openbios();
     let mut p = Psx::new();
     p.load_bios(&bios).unwrap();
     p.load_exe_after_bios(&controller_demo_exe()).unwrap();

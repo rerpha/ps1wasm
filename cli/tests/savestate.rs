@@ -2,15 +2,10 @@
 //! load the save, run the same M frames -> state B. A must equal B
 //! byte-for-byte (any field missing from the state makes them diverge).
 
+use ps1wasm_cli::testkit::host::{openbios, test_assets};
 use ps1wasm_cli::testkit::{bootable_disc, demo_exe, fuzz_cpu_exe, DEMO_PIXELS};
 use ps1wasm_core::disc::{Disc, MemReader};
 use ps1wasm_core::Psx;
-use std::path::Path;
-
-fn assets() -> Option<std::path::PathBuf> {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-assets");
-    p.join("openbios.bin").exists().then_some(p)
-}
 
 fn frames(p: &mut Psx, n: u32) {
     for _ in 0..n {
@@ -56,8 +51,7 @@ fn deterministic_without_bios() {
 
 #[test]
 fn deterministic_cd_boot_saved_mid_loading() {
-    let Some(a) = assets() else { return eprintln!("skipped: no openbios") };
-    let bios = std::fs::read(a.join("openbios.bin")).unwrap();
+    let bios = openbios();
     let raw = bootable_disc(&demo_exe());
     let make = || {
         let mut p = Psx::new();
@@ -101,15 +95,14 @@ fn deterministic_cd_boot_saved_mid_loading() {
 
 #[test]
 fn deterministic_through_hardware_test_programs() {
-    let Some(a) = assets() else { return eprintln!("skipped: no openbios") };
-    let bios = std::fs::read(a.join("openbios.bin")).unwrap();
+    let bios = openbios();
     for (exe, at) in [
         ("mdec/frame/frame-15bit-dma.exe", 160), // mid MDEC decode
         ("gte/test-all/test-all.exe", 150),       // GTE heavy
         ("spu/test/test.exe", 120),               // SPU playback
         ("gpu/lines/lines.exe", 100),
     ] {
-        let path = a.join("ps1-tests").join(exe);
+        let Some(path) = test_assets("ps1-tests").map(|t| t.join(exe)) else { continue };
         let Ok(data) = std::fs::read(&path) else { continue };
         let make = || {
             let mut p = Psx::new();
@@ -123,8 +116,7 @@ fn deterministic_through_hardware_test_programs() {
 
 #[test]
 fn deterministic_random_cpu_programs() {
-    let Some(a) = assets() else { return eprintln!("skipped: no openbios") };
-    let bios = std::fs::read(a.join("openbios.bin")).unwrap();
+    let bios = openbios();
     for seed in 1..4 {
         let exe = fuzz_cpu_exe(seed, 400);
         let make = || {
@@ -203,8 +195,7 @@ fn structural_every_field_restored() {
         p
     };
     check_structural("demo exe", &make, 20);
-    let Some(a) = assets() else { return eprintln!("skipped rest: no openbios") };
-    let bios = std::fs::read(a.join("openbios.bin")).unwrap();
+    let bios = openbios();
     let raw = bootable_disc(&demo_exe());
     let make_cd = || {
         let mut p = Psx::new();
@@ -217,7 +208,8 @@ fn structural_every_field_restored() {
         check_structural(&format!("cd boot @{}", at), &make_cd, at);
     }
     for (exe, at) in [("mdec/frame/frame-15bit-dma.exe", 160), ("spu/test/test.exe", 120), ("gte/test-all/test-all.exe", 150)] {
-        let Ok(data) = std::fs::read(a.join("ps1-tests").join(exe)) else { continue };
+        let Some(path) = test_assets("ps1-tests").map(|t| t.join(exe)) else { continue };
+        let Ok(data) = std::fs::read(path) else { continue };
         let make = || {
             let mut p = Psx::new();
             p.load_bios(&bios).unwrap();
@@ -271,8 +263,7 @@ fn structural_mid_operation_moments() {
     roundtrip(&mut p, "mdec mid-command");
 
     // 3. CD sector delivered but not yet read out
-    let Some(a) = assets() else { return eprintln!("skipped cd part: no openbios") };
-    let bios = std::fs::read(a.join("openbios.bin")).unwrap();
+    let bios = openbios();
     let raw = bootable_disc(&demo_exe());
     let mut p = Psx::new();
     p.load_bios(&bios).unwrap();

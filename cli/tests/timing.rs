@@ -1,25 +1,13 @@
 //! Timing accuracy vs real-hardware measurements (ps1-tests logs), with
 //! numeric tolerances. Skipped when test-assets is absent.
 
-use ps1wasm_core::Psx;
-use std::path::{Path, PathBuf};
-
-fn assets() -> Option<PathBuf> {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-assets");
-    (p.join("openbios.bin").exists() && p.join("ps1-tests").exists()).then_some(p)
-}
+use ps1wasm_cli::testkit::host;
 
 /// Run a ps1-tests program under OpenBIOS; returns (our tty, hardware log).
 fn run(test: &str, frames: u32) -> Option<(String, String)> {
-    let a = assets()?;
-    let dir = a.join("ps1-tests").join(test);
+    let dir = host::test_assets("ps1-tests")?.join(test);
     let exe = std::fs::read_dir(&dir).ok()?.filter_map(|e| e.ok()).map(|e| e.path()).find(|p| p.extension().map(|x| x == "exe").unwrap_or(false))?;
-    let mut p = Psx::new();
-    p.load_bios(&std::fs::read(a.join("openbios.bin")).unwrap()).unwrap();
-    p.load_exe_after_bios(&std::fs::read(exe).unwrap()).unwrap();
-    for _ in 0..frames {
-        p.run_frame();
-    }
+    let p = host::run_exe(&host::openbios(), &std::fs::read(exe).unwrap(), frames, None);
     let log = std::fs::read_to_string(dir.join("psx.log")).unwrap().replace("% ", "").replace('\r', "");
     Some((p.tty.replace('\r', ""), log))
 }

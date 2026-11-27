@@ -1,30 +1,11 @@
 // End-to-end tests of the browser UI, driven like a user would.
-// Usage: npm run test:e2e   (or node web/e2e/test.mjs [distDir] [assetsDir])
-import { chromium } from 'playwright-core';
-import http from 'node:http';
+// Usage: npm run test:e2e   (builds the demo files first; DIST=dir to test another build)
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { fileURLToPath } from 'node:url';
-const here = path.dirname(fileURLToPath(import.meta.url));
+import { start, testFile, openbios } from './harness.mjs';
 
-const dist = path.resolve(process.argv[2] ?? path.join(here, '../../dist'));
-const assets = path.resolve(process.argv[3] ?? path.join(here, 'assets'));
-const types = { '.html': 'text/html', '.js': 'text/javascript', '.wasm': 'application/wasm' };
-const server = http.createServer((req, res) => {
-  const p = path.join(dist, req.url === '/' ? 'index.html' : req.url.split('?')[0]);
-  fs.readFile(p, (err, data) => {
-    if (err) { res.writeHead(404); res.end(); return; }
-    res.writeHead(200, { 'Content-Type': types[path.extname(p)] ?? 'application/octet-stream' });
-    res.end(data);
-  });
-}).listen(0);
-const url = `http://localhost:${server.address().port}/`;
-
-const chromeDir = path.join(os.homedir(), '.cache/ms-playwright');
-const exePath = fs.readdirSync(chromeDir).filter(d => d.startsWith('chromium-'))
-  .map(d => path.join(chromeDir, d, 'chrome-linux64/chrome')).find(fs.existsSync);
-const browser = await chromium.launch({ executablePath: exePath, args: ['--autoplay-policy=no-user-gesture-required'] });
+const { url, browser, close } = await start(['--autoplay-policy=no-user-gesture-required']);
 const context = await browser.newContext({ acceptDownloads: true });
 const page = await context.newPage();
 const errors = [];
@@ -84,23 +65,19 @@ const canvasPx = (x, y) => page.evaluate(([x, y]) => { const c = document.queryS
 const CROSS = { x: 246, y: 117, on: 0xF09040, off: 0x482818 };
 const START = { x: 171, y: 99, on: 0xE0E0E0, off: 0x404040 };
 const isColor = async (b, which) => JSON.stringify(await canvasPx(b.x, b.y)) === JSON.stringify(rgb15(b[which]));
-if (fs.existsSync(path.join(dist, 'test-files', 'controller.exe'))) {
-  await page.click('#demo-btn');
-  check(await waitFor(() => isColor(CROSS, 'off'), 8000), '"Try the demo" runs the controller demo');
-  await page.keyboard.down('KeyX');
-  check(await waitFor(() => isColor(CROSS, 'on'), 2000), 'keyboard X lights ✕ in the controller demo');
-  await page.keyboard.up('KeyX');
-  check(await waitFor(() => isColor(CROSS, 'off'), 2000), 'releasing X turns ✕ off');
-  await page.keyboard.down('Enter');
-  check(await waitFor(() => isColor(START, 'on'), 2000), 'Enter lights Start');
-  await page.keyboard.up('Enter');
-  await page.click('#btn-eject');
-} else {
-  console.log('SKIP demo button (run npm run build:demo first)');
-}
+await page.click('#demo-btn');
+check(await waitFor(() => isColor(CROSS, 'off'), 8000), '"Try the demo" runs the controller demo');
+await page.keyboard.down('KeyX');
+check(await waitFor(() => isColor(CROSS, 'on'), 2000), 'keyboard X lights ✕ in the controller demo');
+await page.keyboard.up('KeyX');
+check(await waitFor(() => isColor(CROSS, 'off'), 2000), 'releasing X turns ✕ off');
+await page.keyboard.down('Enter');
+check(await waitFor(() => isColor(START, 'on'), 2000), 'Enter lights Start');
+await page.keyboard.up('Enter');
+await page.click('#btn-eject');
 
 // ---------------------------------------------------------------- 2. EXE without BIOS (file picker)
-await page.setInputFiles('#game-input', path.join(assets, 'demo.exe'));
+await page.setInputFiles('#game-input', testFile('demo.exe'));
 check(await waitFor(demoOnScreen, 8000), 'EXE auto-starts without BIOS and renders the expected picture');
 check(await visible('#toolbar') && !(await visible('#start')), 'toolbar shown, start card hidden while running');
 await page.waitForTimeout(1200);
@@ -122,10 +99,10 @@ check(await waitFor(async () => /bundled, MIT licence\) — OpenBIOS/.test(await
 const lic = await page.evaluate(async () => (await fetch('openbios/LICENSE.txt')).text());
 check(/MIT License/.test(lic) && /PCSX-Redux authors/.test(lic), 'OpenBIOS licence text is served with the binary');
 check(/OpenBIOS<\/a> © PCSX-Redux authors/.test(await page.$eval('footer', e => e.innerHTML)), 'footer credits OpenBIOS');
-await dropFiles([path.join(assets, 'openbios.bin')]);
+await dropFiles([openbios]);
 check(await waitFor(async () => /OpenBIOS/.test(await text('#bios-status')), 5000), `dropped BIOS recognised: "${await text('#bios-status')}"`);
 check(await page.$eval('#step-bios', e => e.classList.contains('done')), 'BIOS step marked done');
-await dropFiles([path.join(assets, 'demo.cue'), path.join(assets, 'demo.bin')]);
+await dropFiles([testFile('demo.cue'), testFile('demo.bin')]);
 check(await waitFor(async () => (await visible('#toolbar')), 8000), 'dropping .cue + .bin auto-starts the game');
 check(await waitFor(demoOnScreen, 60000), 'disc booted through the BIOS and rendered');
 
@@ -188,7 +165,7 @@ await page.reload();
 await page.waitForSelector('#start');
 check(!(await visible('#continue')), 'Continue gone after forgetting');
 // put it back for the remaining checks
-await dropFiles([path.join(assets, 'demo.cue'), path.join(assets, 'demo.bin')]);
+await dropFiles([testFile('demo.cue'), testFile('demo.bin')]);
 check(await waitFor(demoOnScreen, 60000), 'disc boots again after forgetting');
 await page.click('#btn-eject');
 await page.reload();
@@ -283,6 +260,5 @@ for (const [w, h, expectNoOverlap] of [[844, 390, true], [667, 375, false]]) {
 }
 
 check(errors.length === 0, `no console errors ${errors.length ? JSON.stringify(errors) : ''}`);
-await browser.close();
-server.close();
+await close();
 process.exit(failed ? 1 : 0);

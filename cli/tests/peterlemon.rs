@@ -5,20 +5,11 @@
 use ps1wasm_core::Psx;
 use std::path::{Path, PathBuf};
 
-fn root() -> Option<PathBuf> {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-assets");
-    (p.join("peterlemon").exists() && p.join("openbios.bin").exists()).then_some(p)
-}
+use ps1wasm_cli::testkit::host::{load_png, openbios};
 
-fn load_png(path: &Path) -> Option<(usize, usize, Vec<[u8; 3]>)> {
-    let mut dec = png::Decoder::new(std::fs::File::open(path).ok()?);
-    dec.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-    let mut r = dec.read_info().ok()?;
-    let mut buf = vec![0; r.output_buffer_size()];
-    let info = r.next_frame(&mut buf).ok()?;
-    let ch = info.color_type.samples();
-    let px = buf[..info.buffer_size()].chunks(ch).map(|c| [c[0], c[1 % ch], c[2 % ch]]).collect();
-    Some((info.width as usize, info.height as usize, px))
+/// test-assets/peterlemon, if downloaded.
+fn root() -> Option<PathBuf> {
+    ps1wasm_cli::testkit::host::test_assets("peterlemon")
 }
 
 pub struct Cmp {
@@ -35,10 +26,10 @@ pub struct Cmp {
 }
 
 /// Run an EXE under OpenBIOS and compare with its expected screenshot.
-pub fn compare(root: &Path, exe: &Path, png: &Path, frames: u32) -> Option<Cmp> {
+pub fn compare(exe: &Path, png: &Path, frames: u32) -> Option<Cmp> {
     let (rw, rh, refpx) = load_png(png)?;
     let mut p = Psx::new();
-    p.load_bios(&std::fs::read(root.join("openbios.bin")).ok()?).ok()?;
+    p.load_bios(&openbios()).ok()?;
     p.load_exe_after_bios(&std::fs::read(exe).ok()?).ok()?;
     for _ in 0..frames {
         p.run_frame();
@@ -112,10 +103,10 @@ pub fn compare(root: &Path, exe: &Path, png: &Path, frames: u32) -> Option<Cmp> 
 }
 
 fn exes(root: &Path) -> Vec<(String, PathBuf, PathBuf)> {
-    let list = std::fs::read_to_string(root.join("peterlemon/list.txt")).unwrap_or_default();
+    let list = std::fs::read_to_string(root.join("list.txt")).unwrap_or_default();
     let mut out = vec![];
     for line in list.lines().filter(|l| l.ends_with(".exe")) {
-        let exe = root.join("peterlemon").join(line);
+        let exe = root.join(line);
         let png = exe.with_extension("png");
         if png.exists() {
             out.push((line.trim_end_matches(".exe").to_string(), exe, png));
@@ -160,7 +151,7 @@ fn structural_list(r: &Path) -> Vec<String> {
 fn exact_screens() {
     let Some(r) = root() else { return eprintln!("skipped") };
     for (name, exe, png) in exes(&r).into_iter().filter(|(n, _, _)| EXACT.contains(&n.as_str())) {
-        let c = compare(&r, &exe, &png, 150).unwrap();
+        let c = compare(&exe, &png, 150).unwrap();
         assert!(c.exact >= 0.9999, "{}: exact {:.3}%", name, c.exact * 100.0);
     }
 }
@@ -172,7 +163,7 @@ fn cpu_gte_and_rectangle_tests_structurally_identical() {
     assert!(want.len() >= 40, "{} tests", want.len());
     let mut bad = vec![];
     for (name, exe, png) in exes(&r).into_iter().filter(|(n, _, _)| want.contains(n)) {
-        let c = compare(&r, &exe, &png, 150).unwrap();
+        let c = compare(&exe, &png, 150).unwrap();
         if c.structural < 0.9999 {
             bad.push(format!("{}: structural {:.3}%", name, c.structural * 100.0));
         }
@@ -187,7 +178,7 @@ fn survey() {
     let Some(r) = root() else { return eprintln!("skipped") };
     let mut results = vec![];
     for (name, exe, png) in exes(&r) {
-        let res = compare(&r, &exe, &png, 150);
+        let res = compare(&exe, &png, 150);
         results.push((name, res));
     }
     for (name, res) in &results {
@@ -211,7 +202,7 @@ fn debug_one() {
         }
         let (rw, rh, refpx) = load_png(&png).unwrap();
         let mut p = Psx::new();
-        p.load_bios(&std::fs::read(r.join("openbios.bin")).unwrap()).unwrap();
+        p.load_bios(&openbios()).unwrap();
         p.load_exe_after_bios(&std::fs::read(&exe).unwrap()).unwrap();
         for _ in 0..150 {
             p.run_frame();
@@ -255,10 +246,10 @@ fn decompressed_24bit_images_match_exactly() {
         "Compress/HUFFMAN/HUFFMANDecode/HUFFMANDecode",
         "Compress/HUFFMAN/HUFFMANVRAM/HUFFMANVRAM",
     ] {
-        let base = r.join("peterlemon").join(name);
+        let base = r.join(name);
         let (rw, rh, refpx) = load_png(&base.with_extension("png")).unwrap();
         let mut p = Psx::new();
-        p.load_bios(&std::fs::read(r.join("openbios.bin")).unwrap()).unwrap();
+        p.load_bios(&openbios()).unwrap();
         p.load_exe_after_bios(&std::fs::read(base.with_extension("exe")).unwrap()).unwrap();
         for _ in 0..600 {
             p.run_frame();

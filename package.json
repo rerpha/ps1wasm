@@ -15,7 +15,7 @@
     "build:demo": "cargo run --release -q -p ps1wasm-cli --bin ps1wasm-mktest -- dist/test-files",
     "serve": "node tools/serve.mjs dist 8080",
     "test": "cargo test --workspace --release",
-    "test:e2e": "node web/e2e/test.mjs dist web/e2e/assets"
+    "test:e2e": "npm run build:demo && node web/e2e/test.mjs"
   },
   "devDependencies": {
     "playwright-core": "1.49.1",

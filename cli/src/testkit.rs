@@ -1,10 +1,151 @@
-//! Builders for self-made test content: a GPU demo PS-X EXE and a minimal
-//! bootable ISO9660 disc (raw Mode 2). No copyrighted material involved.
+//! Self-made test content and shared test helpers. No copyrighted material:
+//! every program here is assembled from scratch.
+//!
+//! - [`asm`]: tiny MIPS assembler with labels
+//! - [`make_exe`]: wrap code in a PS-X EXE header
+//! - demo programs: [`demo_exe`], [`controller_demo_exe`], [`alu_bench_exe`],
+//!   [`fuzz_cpu_exe`]; [`bootable_disc`] wraps an EXE in an ISO9660 disc
+//! - [`host`]: helpers for tests and tools (OpenBIOS, asset paths, PNGs)
 
-fn lui(rt: u32, imm: u32) -> u32 { (0x0F << 26) | (rt << 16) | (imm & 0xFFFF) }
-fn ori(rt: u32, rs: u32, imm: u32) -> u32 { (0x0D << 26) | (rs << 21) | (rt << 16) | (imm & 0xFFFF) }
-fn sw(rt: u32, off: u32, rs: u32) -> u32 { (0x2B << 26) | (rs << 21) | (rt << 16) | (off & 0xFFFF) }
-fn j(t: u32) -> u32 { (0x02 << 26) | ((t >> 2) & 0x03FF_FFFF) }
+// ---------------------------------------------------------------------------
+// Tiny MIPS assembler with labels.
+
+pub mod asm {
+    use std::collections::HashMap;
+
+    pub const ZERO: u32 = 0;
+    pub const V0: u32 = 2;
+    pub const A0: u32 = 4;
+    pub const A1: u32 = 5;
+    pub const A2: u32 = 6;
+    pub const T0: u32 = 8;
+    pub const T1: u32 = 9;
+    pub const T2: u32 = 10;
+    pub const T3: u32 = 11;
+    pub const T4: u32 = 12;
+    pub const T5: u32 = 13;
+    pub const S0: u32 = 16;
+    pub const S1: u32 = 17;
+    pub const S2: u32 = 18;
+    pub const S3: u32 = 19;
+    pub const S4: u32 = 20;
+    pub const S5: u32 = 21;
+    pub const S6: u32 = 22;
+    pub const S7: u32 = 23;
+    pub const RA: u32 = 31;
+
+    enum Fix {
+        Branch,
+        Jump,
+        La(u32),
+    }
+
+    pub struct Asm {
+        pub base: u32,
+        pub code: Vec<u32>,
+        labels: HashMap<String, usize>,
+        fixups: Vec<(usize, String, Fix)>,
+    }
+
+    impl Asm {
+        pub fn new(base: u32) -> Asm {
+            Asm { base, code: vec![], labels: HashMap::new(), fixups: vec![] }
+        }
+        pub fn label(&mut self, l: &str) {
+            assert!(self.labels.insert(l.to_string(), self.code.len()).is_none(), "duplicate label {}", l);
+        }
+        pub fn word(&mut self, w: u32) {
+            self.code.push(w);
+        }
+        fn r(&mut self, f: u32, rs: u32, rt: u32, rd: u32, sh: u32) {
+            self.code.push((rs << 21) | (rt << 16) | (rd << 11) | (sh << 6) | f);
+        }
+        fn i(&mut self, op: u32, rs: u32, rt: u32, imm: u32) {
+            self.code.push((op << 26) | (rs << 21) | (rt << 16) | (imm & 0xFFFF));
+        }
+        pub fn nop(&mut self) { self.code.push(0); }
+        pub fn addu(&mut self, rd: u32, rs: u32, rt: u32) { self.r(0x21, rs, rt, rd, 0) }
+        pub fn and(&mut self, rd: u32, rs: u32, rt: u32) { self.r(0x24, rs, rt, rd, 0) }
+        pub fn or(&mut self, rd: u32, rs: u32, rt: u32) { self.r(0x25, rs, rt, rd, 0) }
+        pub fn nor(&mut self, rd: u32, rs: u32, rt: u32) { self.r(0x27, rs, rt, rd, 0) }
+        pub fn mv(&mut self, rd: u32, rs: u32) { self.addu(rd, rs, ZERO) }
+        pub fn sll(&mut self, rd: u32, rt: u32, sh: u32) { self.r(0x00, 0, rt, rd, sh) }
+        pub fn srl(&mut self, rd: u32, rt: u32, sh: u32) { self.r(0x02, 0, rt, rd, sh) }
+        pub fn jr(&mut self, rs: u32) { self.r(0x08, rs, 0, 0, 0) }
+        pub fn addiu(&mut self, rt: u32, rs: u32, imm: i32) { self.i(0x09, rs, rt, imm as u32) }
+        pub fn andi(&mut self, rt: u32, rs: u32, imm: u32) { self.i(0x0C, rs, rt, imm) }
+        pub fn ori(&mut self, rt: u32, rs: u32, imm: u32) { self.i(0x0D, rs, rt, imm) }
+        pub fn lui(&mut self, rt: u32, imm: u32) { self.i(0x0F, 0, rt, imm) }
+        pub fn lw(&mut self, rt: u32, off: i32, rs: u32) { self.i(0x23, rs, rt, off as u32) }
+        pub fn lbu(&mut self, rt: u32, off: i32, rs: u32) { self.i(0x24, rs, rt, off as u32) }
+        pub fn lhu(&mut self, rt: u32, off: i32, rs: u32) { self.i(0x25, rs, rt, off as u32) }
+        pub fn sb(&mut self, rt: u32, off: i32, rs: u32) { self.i(0x28, rs, rt, off as u32) }
+        pub fn sh(&mut self, rt: u32, off: i32, rs: u32) { self.i(0x29, rs, rt, off as u32) }
+        pub fn sw(&mut self, rt: u32, off: i32, rs: u32) { self.i(0x2B, rs, rt, off as u32) }
+        /// Load a 32-bit constant (always 2 instructions: predictable size).
+        pub fn li(&mut self, rt: u32, v: u32) {
+            self.lui(rt, v >> 16);
+            self.ori(rt, rt, v & 0xFFFF);
+        }
+        /// Load the absolute address of a label.
+        pub fn la(&mut self, rt: u32, l: &str) {
+            self.fixups.push((self.code.len(), l.to_string(), Fix::La(rt)));
+            self.code.push(0);
+            self.code.push(0);
+        }
+        fn branch(&mut self, op: u32, rs: u32, rt: u32, l: &str) {
+            self.fixups.push((self.code.len(), l.to_string(), Fix::Branch));
+            self.i(op, rs, rt, 0);
+        }
+        pub fn beq(&mut self, rs: u32, rt: u32, l: &str) { self.branch(0x04, rs, rt, l) }
+        pub fn bne(&mut self, rs: u32, rt: u32, l: &str) { self.branch(0x05, rs, rt, l) }
+        pub fn j(&mut self, l: &str) {
+            self.fixups.push((self.code.len(), l.to_string(), Fix::Jump));
+            self.code.push(0x02 << 26);
+        }
+        pub fn jal(&mut self, l: &str) {
+            self.fixups.push((self.code.len(), l.to_string(), Fix::Jump));
+            self.code.push(0x03 << 26);
+        }
+        pub fn finish(mut self) -> Vec<u32> {
+            for (at, l, fix) in std::mem::take(&mut self.fixups) {
+                let target = *self.labels.get(&l).unwrap_or_else(|| panic!("undefined label {}", l));
+                let addr = self.base + 4 * target as u32;
+                match fix {
+                    Fix::Branch => {
+                        let off = target as i32 - (at as i32 + 1);
+                        self.code[at] |= off as u32 & 0xFFFF;
+                    }
+                    Fix::Jump => self.code[at] |= (addr >> 2) & 0x03FF_FFFF,
+                    Fix::La(rt) => {
+                        self.code[at] = (0x0F << 26) | (rt << 16) | (addr >> 16);
+                        self.code[at + 1] = (0x0D << 26) | (rt << 21) | (rt << 16) | (addr & 0xFFFF);
+                    }
+                }
+            }
+            self.code
+        }
+    }
+}
+
+
+/// Wrap MIPS code (loaded and started at `base`) in a PS-X EXE header.
+pub fn make_exe(base: u32, code: &[u32]) -> Vec<u8> {
+    let mut exe = vec![0u8; 0x800];
+    exe[0..8].copy_from_slice(b"PS-X EXE");
+    // Body size must be a multiple of 2048: BIOS loaders read size/2048 sectors.
+    let body = (code.len() * 4).div_ceil(2048) * 2048;
+    let put = |exe: &mut Vec<u8>, off: usize, v: u32| exe[off..off + 4].copy_from_slice(&v.to_le_bytes());
+    put(&mut exe, 0x10, base); // pc
+    put(&mut exe, 0x18, base); // load address
+    put(&mut exe, 0x1C, body as u32);
+    put(&mut exe, 0x30, 0x801F_FF00); // stack
+    for w in code {
+        exe.extend_from_slice(&w.to_le_bytes());
+    }
+    exe.resize(0x800 + body, 0);
+    exe
+}
 
 /// Expected display pixels of `demo_exe` as ((x, y), 0xRRGGBB).
 pub const DEMO_PIXELS: [((usize, usize), u32); 5] = [
@@ -18,44 +159,28 @@ pub const DEMO_PIXELS: [((usize, usize), u32); 5] = [
 /// A PS-X EXE (no BIOS calls) that sets up a 320x240 display and draws a
 /// background, a gouraud triangle and a rectangle, then loops.
 pub fn demo_exe() -> Vec<u8> {
-    const T0: u32 = 8;
-    const T1: u32 = 9;
+    use asm::*;
     let base = 0x8001_0000u32;
-    let mut code = vec![lui(T1, 0x1F80)];
-    let gp = |code: &mut Vec<u32>, port: u32, w: u32| {
-        code.push(lui(T0, w >> 16));
-        code.push(ori(T0, T0, w & 0xFFFF));
-        code.push(sw(T0, port, T1));
-    };
-    for w in [0x0000_0000, 0x0800_0001, 0x0500_0000, 0x0600_0000 | 0x260 | (0xC60 << 12), 0x0700_0000 | 0x10 | (0x100 << 10), 0x0300_0000] {
-        gp(&mut code, 0x1814, w);
-    }
-    for w in [
+    let mut a = Asm::new(base);
+    a.lui(T1, 0x1F80);
+    let display = [0x0000_0000, 0x0800_0001, 0x0500_0000, 0x0600_0000 | 0x260 | (0xC60 << 12), 0x0700_0000 | 0x10 | (0x100 << 10), 0x0300_0000];
+    let draw = [
         0xE300_0000, 0xE400_0000 | 319 | (239 << 10), 0xE500_0000,
         0x0280_0000, 0x0000_0000, 0x00F0_0140,
         0x3000_00FF, 0x0014_00A0, 0x0000_FF00, 0x00DC_0028, 0x00FF_0000, 0x00DC_0118,
         0x6000_FFFF, 0x0008_0008, 0x0010_0010,
-    ] {
-        gp(&mut code, 0x1810, w);
+    ];
+    for (port, words) in [(0x1814, &display[..]), (0x1810, &draw[..])] {
+        for &w in words {
+            a.li(T0, w);
+            a.sw(T0, port, T1);
+        }
     }
-    let here = base + 4 * code.len() as u32;
-    code.push(j(here));
-    code.push(0);
-
-    let mut exe = vec![0u8; 0x800];
-    exe[0..8].copy_from_slice(b"PS-X EXE");
-    let put = |exe: &mut Vec<u8>, off: usize, v: u32| exe[off..off + 4].copy_from_slice(&v.to_le_bytes());
-    // Body size must be a multiple of 2048: BIOS loaders read size/2048 sectors.
-    let body = (code.len() * 4).div_ceil(2048) * 2048;
-    put(&mut exe, 0x10, base);
-    put(&mut exe, 0x18, base);
-    put(&mut exe, 0x1C, body as u32);
-    put(&mut exe, 0x30, 0x801F_FF00);
-    for w in &code {
-        exe.extend_from_slice(&w.to_le_bytes());
-    }
-    exe.resize(0x800 + body, 0);
-    exe
+    a.label("forever");
+    a.j("forever");
+    a.nop();
+    let code = a.finish();
+    make_exe(base, &code)
 }
 
 const SECTOR: usize = 2048;
@@ -342,166 +467,26 @@ pub fn fuzz_cpu_exe(seed: u64, ops: usize) -> Vec<u8> {
     code.push((0x02 << 26) | ((here >> 2) & 0x03FF_FFFF));
     code.push(0);
 
-    let mut exe = vec![0u8; 0x800];
-    exe[0..8].copy_from_slice(b"PS-X EXE");
-    let body = (code.len() * 4).div_ceil(2048) * 2048;
-    exe[0x10..0x14].copy_from_slice(&base.to_le_bytes());
-    exe[0x18..0x1C].copy_from_slice(&base.to_le_bytes());
-    exe[0x1C..0x20].copy_from_slice(&(body as u32).to_le_bytes());
-    exe[0x30..0x34].copy_from_slice(&0x801F_FF00u32.to_le_bytes());
-    for w in &code {
-        exe.extend_from_slice(&w.to_le_bytes());
-    }
-    exe.resize(0x800 + body, 0);
-    exe
+    make_exe(base, &code)
 }
 
 /// Worst-case CPU load for performance checks: enables the I-cache and runs
 /// a tight ALU loop forever (every cycle is an instruction).
 pub fn alu_bench_exe() -> Vec<u8> {
+    use asm::*;
     let base = 0x8001_0000u32;
-    let code: Vec<u32> = vec![
-        0x3C08_FFFE, // lui t0,0xFFFE
-        0x3409_0800, // ori t1,zero,0x800
-        0xAD09_0130, // sw t1,0x130(t0)   cache control: I-cache on
-        0x2508_0001, // loop: addiu t0,t0,1
-        0x2529_0003, // addiu t1,t1,3
-        0x0109_5021, // addu t2,t0,t1
-        0x0800_0000 | ((base + 12) >> 2) & 0x03FF_FFFF, // j loop
-        0,
-    ];
-    let mut exe = vec![0u8; 0x800];
-    exe[0..8].copy_from_slice(b"PS-X EXE");
-    exe[0x10..0x14].copy_from_slice(&base.to_le_bytes());
-    exe[0x18..0x1C].copy_from_slice(&base.to_le_bytes());
-    exe[0x1C..0x20].copy_from_slice(&2048u32.to_le_bytes());
-    exe[0x30..0x34].copy_from_slice(&0x801F_FF00u32.to_le_bytes());
-    for w in &code {
-        exe.extend_from_slice(&w.to_le_bytes());
-    }
-    exe.resize(0x800 + 2048, 0);
-    exe
-}
-
-// ---------------------------------------------------------------------------
-// Tiny MIPS assembler with labels, used to build the controller demo.
-
-pub mod asm {
-    use std::collections::HashMap;
-
-    pub const ZERO: u32 = 0;
-    pub const V0: u32 = 2;
-    pub const A0: u32 = 4;
-    pub const A1: u32 = 5;
-    pub const A2: u32 = 6;
-    pub const T0: u32 = 8;
-    pub const T1: u32 = 9;
-    pub const T2: u32 = 10;
-    pub const T3: u32 = 11;
-    pub const T4: u32 = 12;
-    pub const T5: u32 = 13;
-    pub const S0: u32 = 16;
-    pub const S1: u32 = 17;
-    pub const S2: u32 = 18;
-    pub const S3: u32 = 19;
-    pub const S4: u32 = 20;
-    pub const S5: u32 = 21;
-    pub const S6: u32 = 22;
-    pub const S7: u32 = 23;
-    pub const RA: u32 = 31;
-
-    enum Fix {
-        Branch,
-        Jump,
-        La(u32),
-    }
-
-    pub struct Asm {
-        pub base: u32,
-        pub code: Vec<u32>,
-        labels: HashMap<String, usize>,
-        fixups: Vec<(usize, String, Fix)>,
-    }
-
-    impl Asm {
-        pub fn new(base: u32) -> Asm {
-            Asm { base, code: vec![], labels: HashMap::new(), fixups: vec![] }
-        }
-        pub fn label(&mut self, l: &str) {
-            assert!(self.labels.insert(l.to_string(), self.code.len()).is_none(), "duplicate label {}", l);
-        }
-        pub fn word(&mut self, w: u32) {
-            self.code.push(w);
-        }
-        fn r(&mut self, f: u32, rs: u32, rt: u32, rd: u32, sh: u32) {
-            self.code.push((rs << 21) | (rt << 16) | (rd << 11) | (sh << 6) | f);
-        }
-        fn i(&mut self, op: u32, rs: u32, rt: u32, imm: u32) {
-            self.code.push((op << 26) | (rs << 21) | (rt << 16) | (imm & 0xFFFF));
-        }
-        pub fn nop(&mut self) { self.code.push(0); }
-        pub fn addu(&mut self, rd: u32, rs: u32, rt: u32) { self.r(0x21, rs, rt, rd, 0) }
-        pub fn and(&mut self, rd: u32, rs: u32, rt: u32) { self.r(0x24, rs, rt, rd, 0) }
-        pub fn or(&mut self, rd: u32, rs: u32, rt: u32) { self.r(0x25, rs, rt, rd, 0) }
-        pub fn nor(&mut self, rd: u32, rs: u32, rt: u32) { self.r(0x27, rs, rt, rd, 0) }
-        pub fn mv(&mut self, rd: u32, rs: u32) { self.addu(rd, rs, ZERO) }
-        pub fn sll(&mut self, rd: u32, rt: u32, sh: u32) { self.r(0x00, 0, rt, rd, sh) }
-        pub fn srl(&mut self, rd: u32, rt: u32, sh: u32) { self.r(0x02, 0, rt, rd, sh) }
-        pub fn jr(&mut self, rs: u32) { self.r(0x08, rs, 0, 0, 0) }
-        pub fn addiu(&mut self, rt: u32, rs: u32, imm: i32) { self.i(0x09, rs, rt, imm as u32) }
-        pub fn andi(&mut self, rt: u32, rs: u32, imm: u32) { self.i(0x0C, rs, rt, imm) }
-        pub fn ori(&mut self, rt: u32, rs: u32, imm: u32) { self.i(0x0D, rs, rt, imm) }
-        pub fn lui(&mut self, rt: u32, imm: u32) { self.i(0x0F, 0, rt, imm) }
-        pub fn lw(&mut self, rt: u32, off: i32, rs: u32) { self.i(0x23, rs, rt, off as u32) }
-        pub fn lbu(&mut self, rt: u32, off: i32, rs: u32) { self.i(0x24, rs, rt, off as u32) }
-        pub fn lhu(&mut self, rt: u32, off: i32, rs: u32) { self.i(0x25, rs, rt, off as u32) }
-        pub fn sb(&mut self, rt: u32, off: i32, rs: u32) { self.i(0x28, rs, rt, off as u32) }
-        pub fn sh(&mut self, rt: u32, off: i32, rs: u32) { self.i(0x29, rs, rt, off as u32) }
-        pub fn sw(&mut self, rt: u32, off: i32, rs: u32) { self.i(0x2B, rs, rt, off as u32) }
-        /// Load a 32-bit constant (always 2 instructions: predictable size).
-        pub fn li(&mut self, rt: u32, v: u32) {
-            self.lui(rt, v >> 16);
-            self.ori(rt, rt, v & 0xFFFF);
-        }
-        /// Load the absolute address of a label.
-        pub fn la(&mut self, rt: u32, l: &str) {
-            self.fixups.push((self.code.len(), l.to_string(), Fix::La(rt)));
-            self.code.push(0);
-            self.code.push(0);
-        }
-        fn branch(&mut self, op: u32, rs: u32, rt: u32, l: &str) {
-            self.fixups.push((self.code.len(), l.to_string(), Fix::Branch));
-            self.i(op, rs, rt, 0);
-        }
-        pub fn beq(&mut self, rs: u32, rt: u32, l: &str) { self.branch(0x04, rs, rt, l) }
-        pub fn bne(&mut self, rs: u32, rt: u32, l: &str) { self.branch(0x05, rs, rt, l) }
-        pub fn j(&mut self, l: &str) {
-            self.fixups.push((self.code.len(), l.to_string(), Fix::Jump));
-            self.code.push(0x02 << 26);
-        }
-        pub fn jal(&mut self, l: &str) {
-            self.fixups.push((self.code.len(), l.to_string(), Fix::Jump));
-            self.code.push(0x03 << 26);
-        }
-        pub fn finish(mut self) -> Vec<u32> {
-            for (at, l, fix) in std::mem::take(&mut self.fixups) {
-                let target = *self.labels.get(&l).unwrap_or_else(|| panic!("undefined label {}", l));
-                let addr = self.base + 4 * target as u32;
-                match fix {
-                    Fix::Branch => {
-                        let off = target as i32 - (at as i32 + 1);
-                        self.code[at] |= off as u32 & 0xFFFF;
-                    }
-                    Fix::Jump => self.code[at] |= (addr >> 2) & 0x03FF_FFFF,
-                    Fix::La(rt) => {
-                        self.code[at] = (0x0F << 26) | (rt << 16) | (addr >> 16);
-                        self.code[at + 1] = (0x0D << 26) | (rt << 21) | (rt << 16) | (addr & 0xFFFF);
-                    }
-                }
-            }
-            self.code
-        }
-    }
+    let mut a = Asm::new(base);
+    a.lui(T0, 0xFFFE);
+    a.ori(T1, ZERO, 0x800);
+    a.sw(T1, 0x130, T0); // cache control: I-cache on
+    a.label("loop");
+    a.addiu(T0, T0, 1);
+    a.addiu(T1, T1, 3);
+    a.addu(T2, T0, T1);
+    a.j("loop");
+    a.nop();
+    let code = a.finish();
+    make_exe(base, &code)
 }
 
 /// One button in the controller demo layout.
@@ -752,16 +737,64 @@ pub fn controller_demo_exe() -> Vec<u8> {
     }
     let code = a.finish();
 
-    let mut exe = vec![0u8; 0x800];
-    exe[0..8].copy_from_slice(b"PS-X EXE");
-    let body = (code.len() * 4).div_ceil(2048) * 2048;
-    exe[0x10..0x14].copy_from_slice(&base.to_le_bytes());
-    exe[0x18..0x1C].copy_from_slice(&base.to_le_bytes());
-    exe[0x1C..0x20].copy_from_slice(&(body as u32).to_le_bytes());
-    exe[0x30..0x34].copy_from_slice(&0x801F_FF00u32.to_le_bytes());
-    for w in &code {
-        exe.extend_from_slice(&w.to_le_bytes());
+    make_exe(base, &code)
+}
+
+// ---------------------------------------------------------------------------
+// Helpers shared by the integration tests and the command-line tools.
+
+pub mod host {
+    use ps1wasm_core::Psx;
+    use std::path::{Path, PathBuf};
+
+    /// A path relative to the repository root.
+    pub fn repo(rel: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(rel)
     }
-    exe.resize(0x800 + body, 0);
-    exe
+
+    /// The bundled OpenBIOS (web/static/openbios, MIT): always available.
+    pub fn openbios() -> Vec<u8> {
+        std::fs::read(repo("web/static/openbios/openbios.bin")).expect("bundled OpenBIOS")
+    }
+
+    /// `test-assets/<sub>` if it has been downloaded (tools/fetch-test-assets.sh).
+    pub fn test_assets(sub: &str) -> Option<PathBuf> {
+        let p = repo("test-assets").join(sub);
+        p.exists().then_some(p)
+    }
+
+    /// Decode a PNG to (width, height, RGB pixels), whatever its colour type.
+    pub fn load_png(path: &Path) -> Option<(usize, usize, Vec<[u8; 3]>)> {
+        let mut dec = png::Decoder::new(std::fs::File::open(path).ok()?);
+        dec.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+        let mut r = dec.read_info().ok()?;
+        let mut buf = vec![0; r.output_buffer_size()];
+        let info = r.next_frame(&mut buf).ok()?;
+        let ch = info.color_type.samples();
+        // grey(+alpha) -> repeat channel 0; RGB(A) -> first three
+        let px = buf[..info.buffer_size()].chunks(ch).map(|c| if ch < 3 { [c[0]; 3] } else { [c[0], c[1], c[2]] }).collect();
+        Some((info.width as usize, info.height as usize, px))
+    }
+
+    /// Boot `bios`, side-load `exe` and run `frames` frames. With `fill`,
+    /// VRAM is filled with that value the moment the EXE starts, so the
+    /// pixels the program draws can be told apart from leftover memory.
+    pub fn run_exe(bios: &[u8], exe: &[u8], frames: u32, fill: Option<u16>) -> Psx {
+        let mut p = Psx::new();
+        p.load_bios(bios).expect("bios");
+        p.load_exe_after_bios(exe).expect("exe");
+        if let Some(f) = fill {
+            let entry = ps1wasm_core::parse_exe(exe).expect("exe").pc;
+            let limit = 33_868_800 * 30;
+            while p.cpu.current_pc != entry && p.bus.cycles < limit {
+                p.step();
+            }
+            p.bus.gpu.vram.fill(f);
+        }
+        let start = p.bus.gpu.frame_count;
+        while p.bus.gpu.frame_count - start < frames as u64 {
+            p.run_frame();
+        }
+        p
+    }
 }

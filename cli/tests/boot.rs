@@ -1,14 +1,8 @@
-//! Full boot-path tests using OpenBIOS (MIT, from PCSX-Redux). Skipped when
-//! test-assets/openbios.bin is absent (fetch with tools/fetch-test-assets.sh).
+//! Full boot-path tests using the bundled OpenBIOS (MIT, from PCSX-Redux).
 
-use ps1wasm_cli::testkit::{bootable_disc, demo_exe, DEMO_PIXELS};
+use ps1wasm_cli::testkit::{bootable_disc, demo_exe, host::openbios, DEMO_PIXELS};
 use ps1wasm_core::disc::{Disc, MemReader};
 use ps1wasm_core::Psx;
-
-fn openbios() -> Option<Vec<u8>> {
-    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../test-assets/openbios.bin");
-    std::fs::read(p).ok()
-}
 
 fn check_demo_screen(p: &Psx) {
     let mut buf = vec![];
@@ -23,7 +17,7 @@ fn check_demo_screen(p: &Psx) {
 
 #[test]
 fn openbios_kernel_boots() {
-    let Some(bios) = openbios() else { eprintln!("skipped: no openbios.bin"); return };
+    let bios = openbios();
     let mut p = Psx::new();
     p.load_bios(&bios).unwrap();
     for _ in 0..120 {
@@ -36,7 +30,7 @@ fn openbios_kernel_boots() {
 
 #[test]
 fn exe_sideloaded_after_bios_runs() {
-    let Some(bios) = openbios() else { eprintln!("skipped: no openbios.bin"); return };
+    let bios = openbios();
     let mut p = Psx::new();
     p.load_bios(&bios).unwrap();
     p.load_exe_after_bios(&demo_exe()).unwrap();
@@ -48,7 +42,7 @@ fn exe_sideloaded_after_bios_runs() {
 
 #[test]
 fn boots_from_cd_through_iso9660_and_system_cnf() {
-    let Some(bios) = openbios() else { eprintln!("skipped: no openbios.bin"); return };
+    let bios = openbios();
     let raw = bootable_disc(&demo_exe());
     let n = raw.len() as u64;
     let mut p = Psx::new();

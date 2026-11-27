@@ -1,12 +1,15 @@
 //! ps1wasm-run: headless emulator runner for automated testing.
 //!
-//!   ps1wasm-run --bios BIOS [--exe FILE | --cue FILE | --bin FILE] [--frames N]
-//!           [--vram OUT.png] [--screen OUT.png] [--compare-vram REF.png]
+//!   ps1wasm-run [--bios BIOS] [--exe FILE | --cue FILE | --bin FILE] [--frames N]
+//!           [--vram OUT.png] [--screen OUT.png] [--compare-vram REF.png [--region X,Y,W,H] [--diff OUT.png]]
+//!           [--pixel X,Y[;X,Y...]] [--peek ADDR:WORDS] [--trace-cd]
 //!
-//! Prints BIOS TTY output to stdout. Exit code 1 if --compare-vram differs.
+//! Without --bios the bundled OpenBIOS is used. Prints BIOS TTY output to
+//! stdout. Exit code 1 if --compare-vram differs.
 
 use ps1wasm_core::disc::{CueSheet, Disc, MemReader};
 use ps1wasm_core::gpu::{VRAM_H, VRAM_W};
+use ps1wasm_cli::testkit::host;
 use ps1wasm_core::Psx;
 use std::path::Path;
 
@@ -32,29 +35,14 @@ fn vram_rgba(p: &Psx) -> Vec<u8> {
     out
 }
 
-fn load_png(path: &str) -> (u32, u32, Vec<u8>) {
-    let mut dec = png::Decoder::new(std::fs::File::open(path).expect("open ref png"));
-    // Expand palette / low-bit-depth images to plain RGB(A).
-    dec.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-    let mut reader = dec.read_info().unwrap();
-    let mut buf = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).unwrap();
-    let buf = &buf[..info.buffer_size()];
-    let rgba: Vec<u8> = match info.color_type {
-        png::ColorType::Rgba => buf.to_vec(),
-        png::ColorType::Rgb => buf.chunks(3).flat_map(|c| [c[0], c[1], c[2], 0xFF]).collect(),
-        png::ColorType::Grayscale => buf.iter().flat_map(|&g| [g, g, g, 0xFF]).collect(),
-        png::ColorType::GrayscaleAlpha => buf.chunks(2).flat_map(|c| [c[0], c[0], c[0], 0xFF]).collect(),
-        other => panic!("unsupported png color type {:?}", other),
-    };
-    (info.width, info.height, rgba)
-}
-
 /// Build a machine from the command line.
 fn build(args: &[String]) -> Psx {
-    let bios = arg(args, "--bios").expect("--bios required");
+    let bios = match arg(args, "--bios") {
+        Some(path) => std::fs::read(&path).expect("read bios"),
+        None => host::openbios(),
+    };
     let mut p = Psx::new();
-    p.load_bios(&std::fs::read(&bios).expect("read bios")).expect("bad bios");
+    p.load_bios(&bios).expect("bad bios");
     if let Some(exe) = arg(args, "--exe") {
         p.load_exe_after_bios(&std::fs::read(&exe).expect("read exe")).expect("bad exe");
     }
@@ -149,8 +137,8 @@ fn main() {
         save_png(&out, VRAM_W as u32, VRAM_H as u32, &vram);
     }
     if let Some(r) = arg(&args, "--compare-vram") {
-        let (w, h, refpx) = load_png(&r);
-        assert_eq!((w, h), (VRAM_W as u32, VRAM_H as u32), "reference must be a full 1024x512 VRAM dump");
+        let (w, h, refpx) = host::load_png(Path::new(&r)).expect("read reference png");
+        assert_eq!((w, h), (VRAM_W, VRAM_H), "reference must be a full 1024x512 VRAM dump");
         // Second run with VRAM pre-filled white: pixels identical in both runs
         // were written by the program; everything else is leftover memory and
         // is excluded (hardware dumps contain arbitrary prior VRAM contents).
@@ -174,7 +162,7 @@ fn main() {
         let mut diff_img = vram.clone();
         for k in 0..VRAM_W * VRAM_H {
             let a = &vram[4 * k..4 * k + 3];
-            let b = &refpx[4 * k..4 * k + 3];
+            let b = &refpx[k];
             // compare written pixels at 5-bit precision
             if written[k] && a.iter().zip(b).any(|(x, y)| (x >> 3) != (y >> 3)) {
                 diff += 1;
