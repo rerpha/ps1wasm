@@ -23,7 +23,8 @@ npm run serve        # http://localhost:8080
 ```
 
 `npm test` runs the Rust tests; `npm run test:e2e` runs the browser tests
-(after `npm run build:demo`).
+(after `npm run build`). `tools/fetch-test-assets.sh` downloads the optional
+real-hardware test suites.
 
 ## Using it
 

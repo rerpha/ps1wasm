@@ -176,6 +176,54 @@ check(await waitFor(demoOnScreen, 60000), 'Continue boots the remembered game');
 await page.click('#btn-load');
 check(await toastSeen(/Loaded slot 1/), 'save state survives a reload (IndexedDB)');
 
+// ---------------------------------------------------------------- 7b. remaining settings + card/BIOS actions
+{
+  const cls = (sel, c) => page.$eval(sel, (e, c) => e.classList.contains(c), c);
+  const stored = () => page.evaluate(() => localStorage.getItem('psx-settings') ?? '');
+  await page.click('#btn-settings');
+  await page.check('#opt-smooth');
+  check(await cls('#screen-wrap', 'smooth') && /smooth=1/.test(await stored()), 'smoothing setting applies and is saved');
+  await page.selectOption('#opt-aspect', 'stretch');
+  check(await cls('#screen-wrap', 'stretch') && /stretch=1/.test(await stored()), 'stretch setting applies and is saved');
+  await page.selectOption('#opt-pad', 'digital');
+  check(/dualshock=0/.test(await stored()), 'controller type saved');
+  await page.selectOption('#opt-pad', 'dualshock');
+  const crossKey = () => page.locator('#keymap tr', { hasText: 'Cross' }).locator('button').textContent();
+  check((await crossKey()).trim() === 'K', 'custom binding before reset');
+  await page.click('#keys-reset');
+  check((await crossKey()).trim() === 'X' && await page.evaluate(() => localStorage.getItem('psx-keys') === null), 'reset restores default keys');
+  await page.click('#mc1-format');   // confirm() is auto-accepted
+  check(await toastSeen(/Memory card 1 formatted/), 'memory card format');
+  await page.click('#settings-close');
+  check(!(await page.$eval('#settings', d => d.open)), 'settings dialog closes');
+  await page.$eval('#volume', e => { e.value = '30'; e.dispatchEvent(new Event('input')); });
+  check(/volume=30/.test(await stored()), 'volume is saved');
+  const touchBefore = await page.evaluate(() => document.body.classList.contains('touch-on'));
+  await page.click('#btn-touch');
+  check(await page.evaluate(() => document.body.classList.contains('touch-on')) !== touchBefore
+    && (await page.evaluate(() => localStorage.getItem('psx-touch'))) === (touchBefore ? '0' : '1'), '🎮 toggles touch controls and remembers');
+  await page.click('#btn-touch');
+  // persisted across a reload
+  await page.click('#btn-eject');
+  await page.reload();
+  await page.waitForSelector('#start');
+  check(await page.isChecked('#opt-smooth') && await page.inputValue('#opt-aspect') === 'stretch' && await page.inputValue('#volume') === '30'
+    && await cls('#screen-wrap', 'stretch'), 'settings restored after reload');
+  // back to defaults
+  await page.click('#btn-settings-top');
+  await page.uncheck('#opt-smooth');
+  await page.selectOption('#opt-aspect', '4:3');
+  check(!(await cls('#screen-wrap', 'smooth')) && !(await cls('#screen-wrap', 'stretch')), 'settings switch back off');
+  // forget the BIOS
+  await page.click('#forget-bios');
+  check(await toastSeen(/BIOS forgotten/) && await page.evaluate(() => localStorage.getItem('psx-bios') === null)
+    && !(await cls('#step-bios', 'done')), 'forget BIOS clears it');
+  await page.click('#settings-close');
+  await page.reload();
+  await page.waitForSelector('#start');
+  check(!/remembered/.test(await text('#bios-status')), 'BIOS stays forgotten after reload');
+}
+
 // ---------------------------------------------------------------- 8. phone: touch controls
 {
   const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
