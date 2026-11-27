@@ -77,10 +77,23 @@ check(!(await visible('#toolbar')), 'toolbar hidden until a game runs');
 check(await page.$eval('#start-btn', b => b.disabled), 'Start disabled without files');
 check(/BIOS dump/.test(await text('#bios-status')), 'BIOS step explains what to provide');
 
-// ---------------------------------------------------------------- 1b. built-in demo button
-if (fs.existsSync(path.join(dist, 'test-files', 'demo.exe'))) {
+// ---------------------------------------------------------------- 1b. built-in controller demo + keyboard
+// 0xBBGGRR -> canvas RGB as the emulator renders it (5-bit expand)
+const rgb15 = (c) => { const e = (v) => { v >>= 3; return (v << 3) | (v >> 2); }; return [e(c & 0xFF), e((c >> 8) & 0xFF), e((c >> 16) & 0xFF)]; };
+const canvasPx = (x, y) => page.evaluate(([x, y]) => { const c = document.querySelector('#screen'); return Array.from(c.getContext('2d').getImageData(x, y, 1, 1).data.slice(0, 3)); }, [x, y]);
+const CROSS = { x: 246, y: 117, on: 0xF09040, off: 0x482818 };
+const START = { x: 171, y: 99, on: 0xE0E0E0, off: 0x404040 };
+const isColor = async (b, which) => JSON.stringify(await canvasPx(b.x, b.y)) === JSON.stringify(rgb15(b[which]));
+if (fs.existsSync(path.join(dist, 'test-files', 'controller.exe'))) {
   await page.click('#demo-btn');
-  check(await waitFor(demoOnScreen, 8000), '"Try the demo" runs the built-in demo');
+  check(await waitFor(() => isColor(CROSS, 'off'), 8000), '"Try the demo" runs the controller demo');
+  await page.keyboard.down('KeyX');
+  check(await waitFor(() => isColor(CROSS, 'on'), 2000), 'keyboard X lights ✕ in the controller demo');
+  await page.keyboard.up('KeyX');
+  check(await waitFor(() => isColor(CROSS, 'off'), 2000), 'releasing X turns ✕ off');
+  await page.keyboard.down('Enter');
+  check(await waitFor(() => isColor(START, 'on'), 2000), 'Enter lights Start');
+  await page.keyboard.up('Enter');
   await page.click('#btn-eject');
 } else {
   console.log('SKIP demo button (run npm run build:demo first)');
@@ -185,6 +198,42 @@ await page.click('#continue-btn');
 check(await waitFor(demoOnScreen, 60000), 'Continue boots the remembered game');
 await page.click('#btn-load');
 check(await toastSeen(/Loaded slot 1/), 'save state survives a reload (IndexedDB)');
+
+// ---------------------------------------------------------------- 8. phone: touch controls
+{
+  const mctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
+  const m = await mctx.newPage();
+  m.on('pageerror', e => errors.push('mobile: ' + e));
+  await m.goto(url);
+  await m.waitForSelector('#start');
+  const mvis = (sel) => m.evaluate(s => getComputedStyle(document.querySelector(s)).display !== 'none', sel);
+  check(!(await mvis('#touch')), 'phone: touch controls hidden on the start screen');
+  await m.click('#demo-btn');
+  await m.waitForTimeout(1500);
+  check(await mvis('#touch'), 'phone: touch controls shown automatically while running');
+  const overflow = await m.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  check(overflow <= 0, `phone: no horizontal overflow (${overflow}px)`);
+  const mpx = (x, y) => m.evaluate(([x, y]) => { const c = document.querySelector('#screen'); return Array.from(c.getContext('2d').getImageData(x, y, 1, 1).data.slice(0, 3)); }, [x, y]);
+  const mIs = async (b, which) => JSON.stringify(await mpx(b.x, b.y)) === JSON.stringify(rgb15(b[which]));
+  const crossBtn = m.locator('#touch [data-btn="16384"]');
+  await crossBtn.dispatchEvent('pointerdown', { pointerId: 1, pointerType: 'touch', isPrimary: true });
+  let ok = false;
+  for (let t = 0; t < 20 && !ok; t++) { await m.waitForTimeout(100); ok = await mIs(CROSS, 'on'); }
+  check(ok, 'phone: holding on-screen ✕ lights ✕ in the demo');
+  await crossBtn.dispatchEvent('pointerup', { pointerId: 1, pointerType: 'touch', isPrimary: true });
+  ok = false;
+  for (let t = 0; t < 20 && !ok; t++) { await m.waitForTimeout(100); ok = await mIs(CROSS, 'off'); }
+  check(ok, 'phone: releasing on-screen ✕ turns it off');
+  // two fingers at once: Start + D-pad up
+  const startBtn = m.locator('#touch [data-btn="8"]');
+  await startBtn.dispatchEvent('pointerdown', { pointerId: 2, pointerType: 'touch' });
+  await m.locator('#touch [data-btn="16"]').dispatchEvent('pointerdown', { pointerId: 3, pointerType: 'touch' });
+  ok = false;
+  for (let t = 0; t < 20 && !ok; t++) { await m.waitForTimeout(100); ok = (await mIs(START, 'on')) && JSON.stringify(await mpx(58, 73)) === JSON.stringify(rgb15(0xE0E0E0)); }
+  check(ok, 'phone: multi-touch (Start + Up together)');
+  await m.screenshot({ path: path.join(os.tmpdir(), 'ps1wasm-phone.png') });
+  await mctx.close();
+}
 
 check(errors.length === 0, `no console errors ${errors.length ? JSON.stringify(errors) : ''}`);
 await browser.close();

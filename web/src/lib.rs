@@ -167,6 +167,8 @@ mod app {
         running: bool,
         paused: bool,
         keys: u16,
+        /// Buttons held on the on-screen touch controls.
+        touch: u16,
         keymap: KeyMap,
         listening: Option<u16>,
         fast: bool,
@@ -293,7 +295,7 @@ mod app {
             if !self.running || self.paused {
                 return;
             }
-            let pad = self.keys | self.poll_gamepads();
+            let pad = self.keys | self.touch | self.poll_gamepads();
             self.psx.set_buttons(0, pad);
             let hz = if self.psx.bus.gpu.pal { 50.0 } else { 59.29 };
             let frame_ms = 1000.0 / hz;
@@ -703,6 +705,7 @@ mod app {
             running: false,
             paused: false,
             keys: 0,
+            touch: 0,
             keymap,
             listening: None,
             fast: false,
@@ -824,8 +827,11 @@ mod app {
             on_id("demo-btn", "click", move |_| {
                 let app = app2.clone();
                 spawn_local(async move {
-                    match fetch_bytes("test-files/demo.exe").await {
-                        Some(data) => handle_files(&app, vec![("demo.exe".to_string(), data)], false),
+                    match fetch_bytes("test-files/controller.exe").await {
+                        Some(data) => {
+                            handle_files(&app, vec![("Controller demo".to_string(), data)], false);
+                            toast("Controller demo: every button lights up — try the keys, a gamepad or the touch controls", "");
+                        }
                         None => toast("The demo isn't included in this build", "bad"),
                     }
                 });
@@ -1065,6 +1071,53 @@ mod app {
             }
         }
 
+        // ---- touch controls (pointer events: multi-touch, mouse and pen)
+        {
+            let touch_device = window().navigator().max_touch_points() > 0;
+            let saved = storage().and_then(|s| s.get_item("psx-touch").ok().flatten());
+            let show_touch = match saved.as_deref() {
+                Some("1") => true,
+                Some("0") => false,
+                _ => touch_device,
+            };
+            let _ = document().body().unwrap().class_list().toggle_with_force("touch-on", show_touch);
+            on_id("btn-touch", "click", move |_| {
+                let body = document().body().unwrap();
+                let shown = body.class_list().toggle("touch-on").unwrap_or(false);
+                if let Some(st) = storage() {
+                    let _ = st.set_item("psx-touch", if shown { "1" } else { "0" });
+                }
+            });
+            let buttons = document().query_selector_all("#touch [data-btn]").unwrap();
+            for k in 0..buttons.length() {
+                let node: Element = buttons.item(k).unwrap().dyn_into().unwrap();
+                let bit: u16 = node.get_attribute("data-btn").and_then(|v| v.parse().ok()).unwrap_or(0);
+                for (ev, down) in [("pointerdown", true), ("pointerup", false), ("pointercancel", false), ("pointerleave", false)] {
+                    let app = app.clone();
+                    let el2 = node.clone();
+                    on(&node, ev, move |e| {
+                        e.prevent_default();
+                        if down {
+                            // keep receiving this finger's events even if it slides off
+                            if let Ok(pe) = e.clone().dyn_into::<web_sys::PointerEvent>() {
+                                let _ = el2.set_pointer_capture(pe.pointer_id());
+                            }
+                        }
+                        let _ = el2.class_list().toggle_with_force("held", down);
+                        if let Ok(mut a) = app.try_borrow_mut() {
+                            if down {
+                                a.touch |= bit;
+                            } else {
+                                a.touch &= !bit;
+                            }
+                        }
+                    });
+                }
+                // no context menu / text selection on long-press
+                on(&node, "contextmenu", |e| e.prevent_default());
+            }
+        }
+
         // ---- keyboard
         {
             let app = app.clone();
@@ -1144,6 +1197,7 @@ mod app {
             on(&window(), "blur", move |_| {
                 let mut a = app.borrow_mut();
                 a.keys = 0;
+                a.touch = 0;
                 a.fast = false;
             });
         }

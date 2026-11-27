@@ -6,6 +6,7 @@ fn main() {
     std::fs::write(dir.join("demo.exe"), &exe).unwrap();
     std::fs::write(dir.join("demo.bin"), ps1wasm_cli::testkit::bootable_disc(&exe)).unwrap();
     std::fs::write(dir.join("alu-bench.exe"), ps1wasm_cli::testkit::alu_bench_exe()).unwrap();
+    std::fs::write(dir.join("controller.exe"), ps1wasm_cli::testkit::controller_demo_exe()).unwrap();
     std::fs::write(dir.join("demo.cue"), "FILE \"demo.bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n").unwrap();
-    println!("wrote demo.exe, demo.bin, demo.cue to {}", dir.display());
+    println!("wrote demo.exe, demo.bin, demo.cue, controller.exe, alu-bench.exe to {}", dir.display());
 }

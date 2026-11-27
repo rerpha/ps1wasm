@@ -382,3 +382,386 @@ pub fn alu_bench_exe() -> Vec<u8> {
     exe.resize(0x800 + 2048, 0);
     exe
 }
+
+// ---------------------------------------------------------------------------
+// Tiny MIPS assembler with labels, used to build the controller demo.
+
+pub mod asm {
+    use std::collections::HashMap;
+
+    pub const ZERO: u32 = 0;
+    pub const V0: u32 = 2;
+    pub const A0: u32 = 4;
+    pub const A1: u32 = 5;
+    pub const A2: u32 = 6;
+    pub const T0: u32 = 8;
+    pub const T1: u32 = 9;
+    pub const T2: u32 = 10;
+    pub const T3: u32 = 11;
+    pub const T4: u32 = 12;
+    pub const T5: u32 = 13;
+    pub const S0: u32 = 16;
+    pub const S1: u32 = 17;
+    pub const S2: u32 = 18;
+    pub const S3: u32 = 19;
+    pub const S4: u32 = 20;
+    pub const S5: u32 = 21;
+    pub const S6: u32 = 22;
+    pub const S7: u32 = 23;
+    pub const RA: u32 = 31;
+
+    enum Fix {
+        Branch,
+        Jump,
+        La(u32),
+    }
+
+    pub struct Asm {
+        pub base: u32,
+        pub code: Vec<u32>,
+        labels: HashMap<String, usize>,
+        fixups: Vec<(usize, String, Fix)>,
+    }
+
+    impl Asm {
+        pub fn new(base: u32) -> Asm {
+            Asm { base, code: vec![], labels: HashMap::new(), fixups: vec![] }
+        }
+        pub fn label(&mut self, l: &str) {
+            assert!(self.labels.insert(l.to_string(), self.code.len()).is_none(), "duplicate label {}", l);
+        }
+        pub fn word(&mut self, w: u32) {
+            self.code.push(w);
+        }
+        fn r(&mut self, f: u32, rs: u32, rt: u32, rd: u32, sh: u32) {
+            self.code.push((rs << 21) | (rt << 16) | (rd << 11) | (sh << 6) | f);
+        }
+        fn i(&mut self, op: u32, rs: u32, rt: u32, imm: u32) {
+            self.code.push((op << 26) | (rs << 21) | (rt << 16) | (imm & 0xFFFF));
+        }
+        pub fn nop(&mut self) { self.code.push(0); }
+        pub fn addu(&mut self, rd: u32, rs: u32, rt: u32) { self.r(0x21, rs, rt, rd, 0) }
+        pub fn and(&mut self, rd: u32, rs: u32, rt: u32) { self.r(0x24, rs, rt, rd, 0) }
+        pub fn or(&mut self, rd: u32, rs: u32, rt: u32) { self.r(0x25, rs, rt, rd, 0) }
+        pub fn nor(&mut self, rd: u32, rs: u32, rt: u32) { self.r(0x27, rs, rt, rd, 0) }
+        pub fn mv(&mut self, rd: u32, rs: u32) { self.addu(rd, rs, ZERO) }
+        pub fn sll(&mut self, rd: u32, rt: u32, sh: u32) { self.r(0x00, 0, rt, rd, sh) }
+        pub fn srl(&mut self, rd: u32, rt: u32, sh: u32) { self.r(0x02, 0, rt, rd, sh) }
+        pub fn jr(&mut self, rs: u32) { self.r(0x08, rs, 0, 0, 0) }
+        pub fn addiu(&mut self, rt: u32, rs: u32, imm: i32) { self.i(0x09, rs, rt, imm as u32) }
+        pub fn andi(&mut self, rt: u32, rs: u32, imm: u32) { self.i(0x0C, rs, rt, imm) }
+        pub fn ori(&mut self, rt: u32, rs: u32, imm: u32) { self.i(0x0D, rs, rt, imm) }
+        pub fn lui(&mut self, rt: u32, imm: u32) { self.i(0x0F, 0, rt, imm) }
+        pub fn lw(&mut self, rt: u32, off: i32, rs: u32) { self.i(0x23, rs, rt, off as u32) }
+        pub fn lbu(&mut self, rt: u32, off: i32, rs: u32) { self.i(0x24, rs, rt, off as u32) }
+        pub fn lhu(&mut self, rt: u32, off: i32, rs: u32) { self.i(0x25, rs, rt, off as u32) }
+        pub fn sb(&mut self, rt: u32, off: i32, rs: u32) { self.i(0x28, rs, rt, off as u32) }
+        pub fn sh(&mut self, rt: u32, off: i32, rs: u32) { self.i(0x29, rs, rt, off as u32) }
+        pub fn sw(&mut self, rt: u32, off: i32, rs: u32) { self.i(0x2B, rs, rt, off as u32) }
+        /// Load a 32-bit constant (always 2 instructions: predictable size).
+        pub fn li(&mut self, rt: u32, v: u32) {
+            self.lui(rt, v >> 16);
+            self.ori(rt, rt, v & 0xFFFF);
+        }
+        /// Load the absolute address of a label.
+        pub fn la(&mut self, rt: u32, l: &str) {
+            self.fixups.push((self.code.len(), l.to_string(), Fix::La(rt)));
+            self.code.push(0);
+            self.code.push(0);
+        }
+        fn branch(&mut self, op: u32, rs: u32, rt: u32, l: &str) {
+            self.fixups.push((self.code.len(), l.to_string(), Fix::Branch));
+            self.i(op, rs, rt, 0);
+        }
+        pub fn beq(&mut self, rs: u32, rt: u32, l: &str) { self.branch(0x04, rs, rt, l) }
+        pub fn bne(&mut self, rs: u32, rt: u32, l: &str) { self.branch(0x05, rs, rt, l) }
+        pub fn j(&mut self, l: &str) {
+            self.fixups.push((self.code.len(), l.to_string(), Fix::Jump));
+            self.code.push(0x02 << 26);
+        }
+        pub fn jal(&mut self, l: &str) {
+            self.fixups.push((self.code.len(), l.to_string(), Fix::Jump));
+            self.code.push(0x03 << 26);
+        }
+        pub fn finish(mut self) -> Vec<u32> {
+            for (at, l, fix) in std::mem::take(&mut self.fixups) {
+                let target = *self.labels.get(&l).unwrap_or_else(|| panic!("undefined label {}", l));
+                let addr = self.base + 4 * target as u32;
+                match fix {
+                    Fix::Branch => {
+                        let off = target as i32 - (at as i32 + 1);
+                        self.code[at] |= off as u32 & 0xFFFF;
+                    }
+                    Fix::Jump => self.code[at] |= (addr >> 2) & 0x03FF_FFFF,
+                    Fix::La(rt) => {
+                        self.code[at] = (0x0F << 26) | (rt << 16) | (addr >> 16);
+                        self.code[at + 1] = (0x0D << 26) | (rt << 21) | (rt << 16) | (addr & 0xFFFF);
+                    }
+                }
+            }
+            self.code
+        }
+    }
+}
+
+/// One button in the controller demo layout.
+pub struct DemoButton {
+    pub mask: u16,
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+    /// 24-bit 0xBBGGRR colours when pressed / released
+    pub on: u32,
+    pub off: u32,
+}
+
+/// Layout of the controller demo (320x240). Shared with the tests so they
+/// can check each button's on-screen state.
+pub fn controller_demo_layout() -> Vec<DemoButton> {
+    use ps1wasm_core::pad::buttons::*;
+    let b = |mask, x, y, w, h, on: u32, off: u32| DemoButton { mask, x, y, w, h, on, off };
+    let grey_on = 0xE0E0E0;
+    let grey_off = 0x404040;
+    vec![
+        b(L2, 20, 16, 70, 14, grey_on, grey_off),
+        b(L1, 20, 34, 70, 14, grey_on, grey_off),
+        b(R2, 230, 16, 70, 14, grey_on, grey_off),
+        b(R1, 230, 34, 70, 14, grey_on, grey_off),
+        b(UP, 55, 70, 22, 22, grey_on, grey_off),
+        b(DOWN, 55, 114, 22, 22, grey_on, grey_off),
+        b(LEFT, 33, 92, 22, 22, grey_on, grey_off),
+        b(RIGHT, 77, 92, 22, 22, grey_on, grey_off),
+        b(TRIANGLE, 243, 70, 22, 22, 0x40F040, 0x184818), // green
+        b(CROSS, 243, 114, 22, 22, 0xF09040, 0x482818),   // blue
+        b(SQUARE, 221, 92, 22, 22, 0xC060F0, 0x381848),   // pink
+        b(CIRCLE, 265, 92, 22, 22, 0x4040F0, 0x181848),   // red
+        b(SELECT, 118, 96, 34, 12, grey_on, grey_off),
+        b(START, 168, 96, 34, 12, grey_on, grey_off),
+        b(L3, 60, 150, 70, 70, 0x806040, 0x302820),       // left stick box
+        b(R3, 190, 150, 70, 70, 0x806040, 0x302820),      // right stick box
+    ]
+}
+
+/// Analog LED position (lit red in DualShock analog mode).
+pub const DEMO_LED: (u32, u32, u32, u32) = (152, 124, 16, 8);
+/// Background colour.
+pub const DEMO_BG: u32 = 0x281818;
+
+/// Interactive controller demo (no BIOS calls; works with or without a
+/// BIOS). Polls the pad on port 1 directly through SIO0 every frame and
+/// draws a controller diagram: every button lights up while held; in
+/// DualShock analog mode the stick dots follow the sticks and the LED is lit.
+pub fn controller_demo_exe() -> Vec<u8> {
+    use asm::*;
+    let base = 0x8001_0000;
+    let mut a = Asm::new(base);
+    let layout = controller_demo_layout();
+
+    // ---- init
+    a.lui(S7, 0x1F80); // I/O base
+    a.sw(ZERO, 0x1074, S7); // I_MASK = 0: we poll, no interrupts
+    for w in [0x0000_0000u32, 0x0800_0001, 0x0500_0000, 0x0600_0000 | 0x260 | (0xC60 << 12), 0x0700_0000 | 0x10 | (0x100 << 10), 0x0300_0000] {
+        a.li(T0, w);
+        a.sw(T0, 0x1814, S7); // GP1
+    }
+    for w in [0xE100_0000u32, 0xE300_0000, 0xE400_0000 | 319 | (239 << 10), 0xE500_0000] {
+        a.li(T0, w);
+        a.sw(T0, 0x1810, S7); // GP0 draw environment
+    }
+    a.li(T0, 0x0040);
+    a.sh(T0, 0x104A, S7); // JOY_CTRL reset
+    a.li(T0, 0x000D);
+    a.sh(T0, 0x1048, S7); // JOY_MODE: 8 bit, x1
+    a.li(T0, 0x0088);
+    a.sh(T0, 0x104E, S7); // JOY_BAUD
+
+    // ---- main loop
+    a.label("loop");
+    a.jal("read_pad");
+    a.nop();
+    a.jal("draw");
+    a.nop();
+    a.jal("vsync");
+    a.nop();
+    a.j("loop");
+    a.nop();
+
+    // ---- read_pad: s0 = buttons (1 = pressed), s1 = sticks rx|ry<<8|lx<<16|ly<<24, s2 = id
+    a.label("read_pad");
+    a.mv(S6, RA);
+    a.li(T0, 0x1003);
+    a.sh(T0, 0x104A, S7); // select port 1, TX/RX enable, ACK IRQ enable
+    a.li(T1, 200);
+    a.label("sel_delay");
+    a.addiu(T1, T1, -1);
+    a.bne(T1, ZERO, "sel_delay");
+    a.nop();
+    for (k, tx) in [0x01u32, 0x42, 0x00, 0x00, 0x00].iter().enumerate() {
+        a.li(A0, *tx);
+        a.jal("xfer");
+        a.nop();
+        match k {
+            1 => a.mv(S2, V0),
+            3 => a.mv(T4, V0),
+            4 => a.mv(T5, V0),
+            _ => {}
+        }
+    }
+    a.sll(T5, T5, 8);
+    a.or(T4, T4, T5);
+    a.nor(S0, T4, ZERO);
+    a.andi(S0, S0, 0xFFFF);
+    a.li(S1, 0x8080_8080);
+    a.li(T0, 0x73);
+    a.bne(S2, T0, "pad_done");
+    a.nop();
+    a.mv(S1, ZERO);
+    for shift in [0u32, 8, 16, 24] {
+        a.li(A0, 0);
+        a.jal("xfer");
+        a.nop();
+        a.sll(V0, V0, shift);
+        a.or(S1, S1, V0);
+    }
+    a.label("pad_done");
+    a.sh(ZERO, 0x104A, S7); // deselect
+    // no (valid) controller: ignore buttons
+    a.andi(T0, S2, 0xF0);
+    a.li(T1, 0x40);
+    a.beq(T0, T1, "pad_ok");
+    a.nop();
+    a.li(T1, 0x70);
+    a.beq(T0, T1, "pad_ok");
+    a.nop();
+    a.mv(S0, ZERO);
+    a.label("pad_ok");
+    a.jr(S6);
+    a.nop();
+
+    // ---- xfer: send a0, return the reply in v0
+    a.label("xfer");
+    a.sb(A0, 0x1040, S7);
+    a.label("xfer_wait");
+    a.lhu(T1, 0x1044, S7);
+    a.nop(); // load delay slot: t1 isn't loaded yet
+    a.andi(T1, T1, 2); // RX FIFO not empty
+    a.beq(T1, ZERO, "xfer_wait");
+    a.nop();
+    a.lbu(V0, 0x1040, S7);
+    a.li(T1, 100); // let the /ACK pulse pass
+    a.label("xfer_ack");
+    a.addiu(T1, T1, -1);
+    a.bne(T1, ZERO, "xfer_ack");
+    a.nop();
+    a.jr(RA);
+    a.nop();
+
+    // ---- rect: GP0 <- a0 (cmd|colour), a1 (y<<16|x), a2 (h<<16|w)
+    a.label("rect");
+    a.lw(T1, 0x1814, S7);
+    a.lui(T2, 0x0400); // GPUSTAT bit 26: ready for command
+    a.and(T1, T1, T2);
+    a.beq(T1, ZERO, "rect");
+    a.nop();
+    a.sw(A0, 0x1810, S7);
+    a.sw(A1, 0x1810, S7);
+    a.sw(A2, 0x1810, S7);
+    a.jr(RA);
+    a.nop();
+
+    // ---- draw
+    a.label("draw");
+    a.mv(S5, RA);
+    a.li(A0, 0x0200_0000 | DEMO_BG); // fill screen
+    a.li(A1, 0);
+    a.li(A2, (240 << 16) | 320);
+    a.jal("rect");
+    a.nop();
+    a.la(S3, "table");
+    a.li(S4, layout.len() as u32);
+    a.label("table_loop");
+    a.lw(T0, 0, S3);
+    a.lw(A1, 4, S3);
+    a.lw(A2, 8, S3);
+    a.lw(T3, 12, S3);
+    a.lw(T2, 16, S3);
+    a.and(T0, T0, S0);
+    a.bne(T0, ZERO, "pressed");
+    a.mv(A0, T3); // (delay slot) pressed colour
+    a.mv(A0, T2); // released colour
+    a.label("pressed");
+    a.jal("rect");
+    a.nop();
+    a.addiu(S3, S3, 20);
+    a.addiu(S4, S4, -1);
+    a.bne(S4, ZERO, "table_loop");
+    a.nop();
+    // analog LED: red in analog mode
+    let (lx, ly, lw, lh) = DEMO_LED;
+    a.li(A0, 0x6000_0030); // dark red
+    a.li(T0, 0x73);
+    a.bne(S2, T0, "led");
+    a.nop();
+    a.li(A0, 0x6000_00FF); // bright red
+    a.label("led");
+    a.li(A1, (ly << 16) | lx);
+    a.li(A2, (lh << 16) | lw);
+    a.jal("rect");
+    a.nop();
+    // stick dots: box + (value >> 2), 6x6 white
+    for (box_x, box_y, xs, ys) in [(60u32, 150u32, 16u32, 24u32), (190, 150, 0, 8)] {
+        a.srl(T0, S1, xs);
+        a.andi(T0, T0, 0xFF);
+        a.srl(T0, T0, 2);
+        a.addiu(T0, T0, box_x as i32);
+        a.srl(T1, S1, ys);
+        a.andi(T1, T1, 0xFF);
+        a.srl(T1, T1, 2);
+        a.addiu(T1, T1, box_y as i32);
+        a.sll(T1, T1, 16);
+        a.or(A1, T0, T1);
+        a.li(A0, 0x60FF_FFFF);
+        a.li(A2, (6 << 16) | 6);
+        a.jal("rect");
+        a.nop();
+    }
+    a.jr(S5);
+    a.nop();
+
+    // ---- vsync: wait for VBlank in I_STAT, acknowledge it
+    a.label("vsync");
+    a.lw(T0, 0x1070, S7);
+    a.nop(); // load delay slot
+    a.andi(T0, T0, 1);
+    a.beq(T0, ZERO, "vsync");
+    a.nop();
+    a.li(T0, 0xFFFF_FFFE);
+    a.sw(T0, 0x1070, S7);
+    a.jr(RA);
+    a.nop();
+
+    // ---- data: mask, xy, wh, on, off
+    a.label("table");
+    for b in &layout {
+        a.word(b.mask as u32);
+        a.word((b.y << 16) | b.x);
+        a.word((b.h << 16) | b.w);
+        a.word(0x6000_0000 | b.on);
+        a.word(0x6000_0000 | b.off);
+    }
+    let code = a.finish();
+
+    let mut exe = vec![0u8; 0x800];
+    exe[0..8].copy_from_slice(b"PS-X EXE");
+    let body = ((code.len() * 4 + 2047) / 2048) * 2048;
+    exe[0x10..0x14].copy_from_slice(&base.to_le_bytes());
+    exe[0x18..0x1C].copy_from_slice(&base.to_le_bytes());
+    exe[0x1C..0x20].copy_from_slice(&(body as u32).to_le_bytes());
+    exe[0x30..0x34].copy_from_slice(&0x801F_FF00u32.to_le_bytes());
+    for w in &code {
+        exe.extend_from_slice(&w.to_le_bytes());
+    }
+    exe.resize(0x800 + body, 0);
+    exe
+}
