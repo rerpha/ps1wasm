@@ -103,6 +103,12 @@ check(!(await visible('#paused')), 'Esc resumes');
 // ---------------------------------------------------------------- 3. close, then BIOS + disc by drag & drop
 await page.click('#btn-eject');
 check(await visible('#start'), 'Close returns to the start card');
+// bundled OpenBIOS button (+ its licence is served alongside)
+await page.click('#openbios-btn');
+check(await waitFor(async () => /bundled, MIT licence\) — OpenBIOS/.test(await text('#bios-status')), 5000), `"Use OpenBIOS" loads the bundled BIOS: "${await text('#bios-status')}"`);
+const lic = await page.evaluate(async () => (await fetch('openbios/LICENSE.txt')).text());
+check(/MIT License/.test(lic) && /PCSX-Redux authors/.test(lic), 'OpenBIOS licence text is served with the binary');
+check(/OpenBIOS<\/a> © PCSX-Redux authors/.test(await page.$eval('footer', e => e.innerHTML)), 'footer credits OpenBIOS');
 await dropFiles([path.join(assets, 'openbios.bin')]);
 check(await waitFor(async () => /OpenBIOS/.test(await text('#bios-status')), 5000), `dropped BIOS recognised: "${await text('#bios-status')}"`);
 check(await page.$eval('#step-bios', e => e.classList.contains('done')), 'BIOS step marked done');

@@ -1,7 +1,8 @@
-// Copies the static page into dist/ after wasm-pack has built dist/pkg.
+// Copies the static page (and its assets, e.g. openbios/) into dist/ after
+// wasm-pack has built dist/pkg.
 import fs from 'node:fs';
 fs.mkdirSync('dist', { recursive: true });
-for (const f of fs.readdirSync('web/static')) fs.copyFileSync(`web/static/${f}`, `dist/${f}`);
+fs.cpSync('web/static', 'dist', { recursive: true });
 // wasm-pack drops its own .gitignore into the output; Pages doesn't need it
 fs.rmSync('dist/pkg/.gitignore', { force: true });
 const wasm = fs.statSync('dist/pkg/ps1wasm_web_bg.wasm').size;

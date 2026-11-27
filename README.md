@@ -135,12 +135,18 @@ with or endorsed by Sony Interactive Entertainment**; “PlayStation” is a
 trademark of Sony Interactive Entertainment Inc., used here only to describe
 what the software is compatible with.
 
-* **No copyrighted Sony material is included or distributed** — no BIOS, no
-  games. You must supply your own BIOS dump and game images, and use only
-  ones you own.
-* The test tooling downloads third-party material at test time (never
-  committed): OpenBIOS (MIT, from PCSX-Redux) and the ps1-tests and
-  PeterLemon/PSX homebrew suites with their reference results.
+* **No copyrighted Sony material is included or distributed** — no Sony
+  BIOS, no commercial games. To use a Sony BIOS or commercial games you must
+  supply your own dumps, and use only ones you own.
+* **OpenBIOS** (the “Use OpenBIOS” button) is bundled in `web/static/openbios/`:
+  an open-source BIOS replacement, © PCSX-Redux authors, **MIT licence**
+  ([source](https://github.com/pcsx-redux/nugget/tree/main/openbios)),
+  shipped unmodified with its licence text. All of its source files are MIT
+  and it links no other libraries. It runs homebrew; commercial games may
+  not boot with it.
+* The test tooling downloads further third-party material at test time
+  (never committed): the ps1-tests and PeterLemon/PSX homebrew suites with
+  their reference results.
 * Some algorithms (GPU attribute interpolation and line stepping) follow
   hardware behaviour as documented by and measured against Mednafen and
   DuckStation; no code was copied from them.

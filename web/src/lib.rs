@@ -102,6 +102,16 @@ mod app {
         let _ = web_sys::Url::revoke_object_url(&url);
     }
 
+    /// Fetch a file shipped with the site (relative URL).
+    async fn fetch_bytes(url: &str) -> Option<Vec<u8>> {
+        let resp: web_sys::Response = JsFuture::from(window().fetch_with_str(url)).await.ok()?.dyn_into().ok()?;
+        if !resp.ok() {
+            return None;
+        }
+        let buf = JsFuture::from(resp.array_buffer().ok()?).await.ok()?;
+        Some(js_sys::Uint8Array::new(&buf).to_vec())
+    }
+
     async fn read_list(list: Option<FileList>) -> Vec<(String, Vec<u8>)> {
         let mut out = vec![];
         let Some(list) = list else { return out };
@@ -793,19 +803,28 @@ mod app {
         }
         {
             let app2 = app.clone();
+            on_id("openbios-btn", "click", move |_| {
+                let app = app2.clone();
+                spawn_local(async move {
+                    match fetch_bytes("openbios/openbios.bin").await {
+                        Some(data) => {
+                            let ok = app.borrow_mut().set_bios("openbios.bin (bundled, MIT licence)", data, true);
+                            if ok {
+                                toast("OpenBIOS ready — homebrew works; commercial games may not", "ok");
+                                maybe_autostart(&app);
+                            }
+                        }
+                        None => toast("OpenBIOS isn't included in this build", "bad"),
+                    }
+                });
+            });
+        }
+        {
+            let app2 = app.clone();
             on_id("demo-btn", "click", move |_| {
                 let app = app2.clone();
                 spawn_local(async move {
-                    let fetched = async {
-                        let resp: web_sys::Response = JsFuture::from(window().fetch_with_str("test-files/demo.exe")).await.ok()?.dyn_into().ok()?;
-                        if !resp.ok() {
-                            return None;
-                        }
-                        let buf = JsFuture::from(resp.array_buffer().ok()?).await.ok()?;
-                        Some(js_sys::Uint8Array::new(&buf).to_vec())
-                    }
-                    .await;
-                    match fetched {
+                    match fetch_bytes("test-files/demo.exe").await {
                         Some(data) => handle_files(&app, vec![("demo.exe".to_string(), data)], false),
                         None => toast("The demo isn't included in this build", "bad"),
                     }
