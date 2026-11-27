@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "description": "PlayStation emulator in Rust/WebAssembly, running in the browser",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rerpha/ps1wasm.git"
+  },
   "type": "module",
   "scripts": {
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",

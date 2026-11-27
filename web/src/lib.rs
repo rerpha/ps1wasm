@@ -447,7 +447,7 @@ mod app {
             show("toolbar", false);
             show("paused", false);
             set_text("fps", "");
-            document().set_title("ps1wasm — PlayStation in your browser");
+            document().set_title("ps1wasm — PS1 emulator in your browser");
             self.update_start_buttons();
             // blank the screen
             self.ctx.set_fill_style_str("#000");

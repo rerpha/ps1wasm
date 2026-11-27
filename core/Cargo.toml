@@ -2,5 +2,7 @@
 name = "ps1wasm-core"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+repository = "https://github.com/rerpha/ps1wasm"
 
 [dependencies]

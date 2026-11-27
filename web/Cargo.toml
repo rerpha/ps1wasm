@@ -2,6 +2,8 @@
 name = "ps1wasm-web"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+repository = "https://github.com/rerpha/ps1wasm"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

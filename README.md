@@ -1,4 +1,4 @@
-# ps1wasm — a PlayStation emulator in Rust, running in the browser
+# ps1wasm — a PS1 emulator in Rust, running in the browser
 
 The whole emulator — CPU, GTE, GPU, SPU, CD-ROM, MDEC, DMA, timers, pads,
 memory cards **and the browser UI** — is Rust compiled to WebAssembly. The only
@@ -126,3 +126,24 @@ need a specific disc.
 Performance: worst case (tight cached CPU loop, every cycle an instruction)
 runs at 3.2× real time natively and costs 7.5 ms of the 16.9 ms frame budget
 in Chromium (`node web/e2e/perf.mjs`).
+
+## Legal
+
+ps1wasm is an independent project written from public documentation
+(psx-spx) and black-box testing of hardware behaviour. It is **not affiliated
+with or endorsed by Sony Interactive Entertainment**; “PlayStation” is a
+trademark of Sony Interactive Entertainment Inc., used here only to describe
+what the software is compatible with.
+
+* **No copyrighted Sony material is included or distributed** — no BIOS, no
+  games. You must supply your own BIOS dump and game images, and use only
+  ones you own.
+* The test tooling downloads third-party material at test time (never
+  committed): OpenBIOS (MIT, from PCSX-Redux) and the ps1-tests and
+  PeterLemon/PSX homebrew suites with their reference results.
+* Some algorithms (GPU attribute interpolation and line stepping) follow
+  hardware behaviour as documented by and measured against Mednafen and
+  DuckStation; no code was copied from them.
+
+Licensed under the [MIT licence](LICENSE).
+
